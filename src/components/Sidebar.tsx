@@ -1,30 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 const itemClass = (active: boolean) =>
-  `block px-3 py-2 rounded-md ${
-    active ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"
+  `block px-3 py-2 rounded-md transition ${
+    active
+      ? "bg-slate-100 font-semibold text-slate-900"
+      : "text-slate-700 hover:bg-slate-50"
   }`;
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
 
- const items = [
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Clients", href: "/clients" },
-  { label: "Calendrier", href: "/calendar" },
-  { label: "Publications", href: "/publications" },
-  { label: "Gym", href: "/gym" },
-  { label: "Notifications", href: "/notifications" },
-  { label: "Abonnement", href: "/subscription" },
-];
-
+  const items = [
+    { label: "Dashboard", href: "/dashboard" },
+    { label: "Clients", href: "/clients" },
+    { label: "Calendrier", href: "/calendar" },
+    { label: "Publications", href: "/publications" },
+    { label: "Gym", href: "/gym" },
+    { label: "Notifications", href: "/notifications" },
+    { label: "Abonnement", href: "/subscription" },
+  ];
 
   return (
-    <aside className="w-64 border-r min-h-screen p-4">
-      <div className="text-xl font-bold mb-4">Jadoline</div>
+    <aside className="w-64 border-r min-h-screen p-4 bg-white">
+      <div className="text-xl font-bold mb-6">Jadoline</div>
 
       <nav className="space-y-1">
         {items.map((it) => (
@@ -37,10 +41,16 @@ export default function Sidebar() {
           </Link>
         ))}
 
-        <div className="pt-3">
-          <Link href="/logout" className="block px-3 py-2 rounded-md text-red-600 hover:bg-red-50">
+        <div className="pt-6 border-t">
+          <button
+            className="block w-full text-left px-3 py-2 rounded-md text-red-600 hover:bg-red-50 transition"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push("/login");
+            }}
+          >
             Déconnexion
-          </Link>
+          </button>
         </div>
       </nav>
     </aside>
