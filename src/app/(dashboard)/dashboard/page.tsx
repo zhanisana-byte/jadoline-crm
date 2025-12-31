@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+
 export default async function DashboardPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
+
   return (
     <div className="space-y-3">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
