@@ -11,15 +11,16 @@ const itemClass = (active: boolean) =>
 export default function Sidebar() {
   const pathname = usePathname();
 
-  const items = [
-    { label: "Dashboard", href: "/dashboard" },
-    { label: "Clients", href: "/dashboard/clients" },
-    { label: "Calendrier", href: "/dashboard/calendar" },
-    { label: "Publications", href: "/dashboard/publications" },
-    { label: "Gym", href: "/dashboard/gym" },
-    { label: "Notifications", href: "/dashboard/notifications" },
-    { label: "Abonnement", href: "/dashboard/subscription" }
-  ];
+ const items = [
+  { label: "Dashboard", href: "/dashboard" },
+  { label: "Clients", href: "/clients" },
+  { label: "Calendrier", href: "/calendar" },
+  { label: "Publications", href: "/publications" },
+  { label: "Gym", href: "/gym" },
+  { label: "Notifications", href: "/notifications" },
+  { label: "Abonnement", href: "/subscription" },
+];
+
 
   return (
     <aside className="w-64 border-r min-h-screen p-4">
