@@ -32,19 +32,27 @@ function CallbackInner() {
       }
 
       // ✅ user must exist now
-      const { data: userRes } = await supabase.auth.getUser();
+      const { data: userRes, error: userErr } = await supabase.auth.getUser();
       const user = userRes?.user;
-      if (!user) {
+      if (userErr || !user) {
         router.replace("/login?error=user_missing");
         return;
       }
 
-      const joinCode = localStorage.getItem("join_code")?.trim() || "";
+      // ✅ IMPORTANT: crée (si absent) l'agence perso + une clé active par défaut
+      setStatus("Initialisation de votre espace personnel…");
+      const { error: ensureErr } = await supabase.rpc("ensure_personal_agency");
+      if (ensureErr) {
+        router.replace("/login?error=init_space");
+        return;
+      }
+
+      const joinCode = (localStorage.getItem("join_code") || "").trim();
       localStorage.removeItem("join_code");
 
-      // 1) Si code → join
+      // 1) Si code → join une autre agence (sans empêcher l’espace perso)
       if (joinCode) {
-        setStatus("Connexion à votre espace…");
+        setStatus("Connexion à votre agence…");
 
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
           p_code: joinCode,
@@ -55,19 +63,13 @@ function CallbackInner() {
           return;
         }
 
-        // ✅ si code invalide → on continue quand même (créer espace)
-        setStatus("Clé invalide, création de votre espace…");
+        // si clé invalide, on continue quand même → il gardera son espace perso + clé
+        setStatus("Clé invalide, redirection vers votre espace…");
+        router.replace("/dashboard");
+        return;
       }
 
-      // 2) Sinon (ou join failed) → créer agence par défaut
-      const fullName =
-        (user.user_metadata as any)?.full_name ||
-        (user.email?.split("@")[0] ?? "Nouveau compte");
-
-      const defaultAgencyName = `Agence de ${fullName}`;
-
-      await supabase.rpc("create_default_agency", { p_name: defaultAgencyName });
-
+      // 2) Sans code → redirection (l'espace perso + clé existent déjà)
       router.replace("/dashboard");
     }
 
