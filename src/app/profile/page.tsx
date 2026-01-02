@@ -34,18 +34,40 @@ export default function ProfilePage() {
   const [email, setEmail] = useState("");
   const [emailConfirmed, setEmailConfirmed] = useState(true);
 
-  // Workspace data
   const [memberships, setMemberships] = useState<MembershipRow[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string | null>(null);
+
   const [members, setMembers] = useState<MemberViewRow[]>([]);
   const [agencyKey, setAgencyKey] = useState<AgencyKeyRow | null>(null);
 
   const flash = (m: string) => {
     setToast(m);
-    setTimeout(() => setToast(null), 2500);
+    setTimeout(() => setToast(null), 2600);
   };
 
-  // ---------- Load auth + profile + memberships ----------
+  const reloadMemberships = async (userId: string) => {
+    const { data: ms, error: msErr } = await supabase
+      .from("agency_members")
+      .select("id, agency_id, user_id, role, status, agencies(id,name)")
+      .eq("user_id", userId);
+
+    if (msErr) {
+      flash(msErr.message || "Erreur chargement agences");
+      setMemberships([]);
+      return [];
+    }
+
+    const list = (ms || []) as MembershipRow[];
+    setMemberships(list);
+
+    if ((!selectedAgencyId || !list.some((x) => x.agency_id === selectedAgencyId)) && list.length) {
+      setSelectedAgencyId(list[0].agency_id);
+    }
+
+    return list;
+  };
+
+  // 1) LOAD auth + profile + memberships
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -58,11 +80,11 @@ export default function ProfilePage() {
       }
 
       const user = authRes.user;
+
       setAuthUserId(user.id);
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user.email_confirmed_at || (user as any).confirmed_at));
 
-      // profile
       const { data: p, error: pErr } = await supabase
         .from("users_profile")
         .select("user_id, full_name, role, created_at, avatar_url")
@@ -74,36 +96,10 @@ export default function ProfilePage() {
         setLoading(false);
         return;
       }
+
       setProfile(p as ProfileRow);
 
-      // memberships
-      // ⚠️ IMPORTANT: adapte les colonnes selon ta table agency_members
-      // Chez toi on voit: agency_id, user_id, role, status (+ id)
-      const { data: ms, error: msErr } = await supabase
-        .from("agency_members")
-        .select("agency_id, user_id, role, status, agencies(id,name)")
-        .eq("user_id", user.id);
-
-      if (msErr) {
-        flash(msErr.message || "Erreur chargement agences");
-        setMemberships([]);
-      } else {
-        // On mappe vers ton type MembershipRow attendu par WorkspaceCard
-        const mapped = (ms || []).map((m: any) => ({
-          agency_id: m.agency_id,
-          user_id: m.user_id,
-          member_role: m.role,           // <-- mapping: role -> member_role
-          workspace_role: "ALL",          // <-- placeholder si pas dans DB
-          joined_at: new Date().toISOString(), // <-- placeholder si pas dans DB
-          agencies: m.agencies,
-        })) as MembershipRow[];
-
-        setMemberships(mapped);
-
-        if (!selectedAgencyId && mapped.length) {
-          setSelectedAgencyId(mapped[0].agency_id);
-        }
-      }
+      await reloadMemberships(user.id);
 
       setLoading(false);
     };
@@ -112,73 +108,59 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  // ---------- Derived ----------
+  // Derived
   const selectedMembership =
     memberships.find((m) => m.agency_id === selectedAgencyId) || null;
 
-  const isOwner = selectedMembership?.member_role === "OWNER";
+  const isOwner = selectedMembership?.role === "OWNER";
 
-  const onSelectAgency = (agencyId: string) => {
-    setSelectedAgencyId(agencyId);
-  };
-
-  // ---------- Load members + key for selected agency ----------
+  // 2) LOAD members + key for selected agency
   useEffect(() => {
-    const loadAgencyDetails = async () => {
+    const loadAgency = async () => {
       if (!selectedAgencyId) {
         setMembers([]);
         setAgencyKey(null);
         return;
       }
 
-      // members list
-      // ⚠️ adapte les colonnes : tu as role + status
       const { data: mems, error: memErr } = await supabase
         .from("agency_members")
         .select("user_id, role, status, users_profile(full_name, avatar_url)")
         .eq("agency_id", selectedAgencyId);
 
       if (memErr) {
-        // souvent: RLS/permission denied
         flash(memErr.message || "Erreur chargement membres");
         setMembers([]);
       } else {
-        const mappedMembers = (mems || []).map((m: any) => ({
-          user_id: m.user_id,
-          member_role: m.role,           // role -> member_role
-          workspace_role: m.status || "ACTIVE", // status -> workspace_role (ou l’inverse selon ton choix)
-          joined_at: new Date().toISOString(),
-          users_profile: m.users_profile,
-        })) as MemberViewRow[];
-
-        setMembers(mappedMembers);
+        setMembers((mems || []) as MemberViewRow[]);
       }
 
-      // agency key (only owner)
-      if (isOwner) {
-        const { data: key, error: keyErr } = await supabase
-          .from("agency_keys")
-          .select("code, is_active, created_at")
-          .eq("agency_id", selectedAgencyId)
-          .eq("is_active", true)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (keyErr) {
-          setAgencyKey(null);
-        } else {
-          setAgencyKey((key as AgencyKeyRow) || null);
-        }
-      } else {
+      if (!isOwner) {
         setAgencyKey(null);
+        return;
+      }
+
+      const { data: key, error: keyErr } = await supabase
+        .from("agency_keys")
+        .select("id, active, created_at")
+        .eq("agency_id", selectedAgencyId)
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (keyErr) {
+        setAgencyKey(null);
+      } else {
+        setAgencyKey((key as AgencyKeyRow) || null);
       }
     };
 
-    loadAgencyDetails();
-  }, [selectedAgencyId, isOwner, supabase]);
+    loadAgency();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAgencyId, isOwner]);
 
-  // ---------- Actions ----------
+  // ACTIONS
   const onSaveName = async (newName: string) => {
     if (!authUserId) return;
     setBusy(true);
@@ -188,7 +170,7 @@ export default function ProfilePage() {
       .update({ full_name: newName })
       .eq("user_id", authUserId);
 
-    if (error) flash("Erreur mise à jour");
+    if (error) flash(error.message || "Erreur mise à jour");
     else {
       setProfile((prev) => (prev ? { ...prev, full_name: newName } : prev));
       flash("Nom mis à jour ✅");
@@ -206,8 +188,6 @@ export default function ProfilePage() {
     }
   };
 
-  // ⚠️ Ici on appelle un RPC (recommandé) pour générer une clé
-  // Si tu n’as pas encore ce RPC, dis-moi et je te donne le SQL exact.
   const onGenerateKey = async () => {
     if (!selectedAgencyId) return;
     setBusy(true);
@@ -217,18 +197,18 @@ export default function ProfilePage() {
     });
 
     if (error || !data) {
-      flash("Impossible de générer une clé");
+      flash(error?.message || "Impossible de générer la clé");
       setBusy(false);
       return;
     }
 
     flash("Clé générée ✅");
-    // recharge clé
+
     const { data: key } = await supabase
       .from("agency_keys")
-      .select("code, is_active, created_at")
+      .select("id, active, created_at")
       .eq("agency_id", selectedAgencyId)
-      .eq("is_active", true)
+      .eq("active", true)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -237,11 +217,52 @@ export default function ProfilePage() {
     setBusy(false);
   };
 
+  const onCreateAgency = async (name: string) => {
+    setBusy(true);
+
+    const { data, error } = await supabase.rpc("create_agency", {
+      p_name: name,
+    });
+
+    if (error || !data) {
+      flash(error?.message || "Impossible de créer l’espace");
+      setBusy(false);
+      return;
+    }
+
+    flash("Espace créé ✅");
+
+    await reloadMemberships(authUserId);
+    setSelectedAgencyId(String(data));
+    setBusy(false);
+  };
+
+  const onJoinAgency = async (code: string) => {
+    setBusy(true);
+
+    const { data, error } = await supabase.rpc("join_agency_with_code", {
+      p_code: code,
+    });
+
+    if (error || !data) {
+      flash(error?.message || "Clé invalide / accès refusé");
+      setBusy(false);
+      return;
+    }
+
+    flash("Agence rejointe ✅");
+
+    await reloadMemberships(authUserId);
+    setSelectedAgencyId(String(data));
+    setBusy(false);
+  };
+
   if (loading) return <div className="p-6">Chargement…</div>;
   if (!profile) return <div className="p-6">Profil introuvable</div>;
 
   return (
     <div className="max-w-6xl mx-auto p-6">
+      {/* Header */}
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Profil</h1>
@@ -260,15 +281,14 @@ export default function ProfilePage() {
         </div>
       </div>
 
+      {/* Tabs */}
       <div className="mt-6 flex flex-wrap gap-2">
         <TabButton active={tab === "INFO"} onClick={() => setTab("INFO")}>
           Infos
         </TabButton>
-
         <TabButton active={tab === "MY_AGENCIES"} onClick={() => setTab("MY_AGENCIES")}>
           Mes agences
         </TabButton>
-
         <TabButton active={tab === "WORK"} onClick={() => setTab("WORK")}>
           Work
         </TabButton>
@@ -286,39 +306,25 @@ export default function ProfilePage() {
             />
           )}
 
-          {tab === "MY_AGENCIES" && (
-            <>
-              <WorkspaceCard
-                memberships={memberships}
-                selectedAgencyId={selectedAgencyId}
-                onSelectAgency={onSelectAgency}
-                members={members}
-                isOwner={!!isOwner}
-                agencyKey={agencyKey}
-                onGenerateKey={onGenerateKey}
-                onCopy={onCopy}
-                busy={busy}
-              />
-              <CreateAgencyCard />
-            </>
+          {(tab === "MY_AGENCIES" || tab === "WORK") && (
+            <WorkspaceCard
+              memberships={memberships}
+              selectedAgencyId={selectedAgencyId}
+              onSelectAgency={setSelectedAgencyId}
+              members={members}
+              isOwner={!!isOwner}
+              agencyKey={agencyKey}
+              onGenerateKey={onGenerateKey}
+              onCopy={onCopy}
+              busy={busy}
+            />
           )}
 
-          {tab === "WORK" && (
-            <>
-              <WorkspaceCard
-                memberships={memberships}
-                selectedAgencyId={selectedAgencyId}
-                onSelectAgency={onSelectAgency}
-                members={members}
-                isOwner={!!isOwner}
-                agencyKey={agencyKey}
-                onGenerateKey={onGenerateKey}
-                onCopy={onCopy}
-                busy={busy}
-              />
-              <JoinAgencyCard />
-            </>
+          {tab === "MY_AGENCIES" && (
+            <CreateAgencyCard busy={busy} onCreate={onCreateAgency} />
           )}
+
+          {tab === "WORK" && <JoinAgencyCard busy={busy} onJoin={onJoinAgency} />}
         </div>
 
         <aside className="lg:col-span-4">
@@ -343,12 +349,11 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 rounded-xl text-sm font-medium border transition
-        ${
-          active
-            ? "bg-slate-900 text-white border-slate-900"
-            : "bg-white border-slate-200 hover:bg-slate-50"
-        }`}
+      className={`px-4 py-2 rounded-xl text-sm font-medium border transition ${
+        active
+          ? "bg-slate-900 text-white border-slate-900"
+          : "bg-white border-slate-200 hover:bg-slate-50"
+      }`}
     >
       {children}
     </button>
