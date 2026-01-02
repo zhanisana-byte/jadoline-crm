@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -9,49 +9,81 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const ran = useRef(false);
+  const [status, setStatus] = useState("Confirmation en cours…");
+
   useEffect(() => {
-    const code = searchParams.get("code");
+    if (ran.current) return; // ✅ évite double exécution (React Strict Mode)
+    ran.current = true;
 
-    if (!code) {
-      router.replace("/login?error=missing_code");
-      return;
-    }
+    async function run() {
+      const code = searchParams.get("code");
 
-    supabase.auth.exchangeCodeForSession(code).then(async ({ error }) => {
+      if (!code) {
+        router.replace("/login?error=missing_code");
+        return;
+      }
+
+      setStatus("Validation de votre session…");
+
+      // 1) Exchange auth code → session
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) {
         router.replace("/login?error=confirmation");
         return;
       }
 
-      // ✅ après confirmation : si une clé existe (stockée au register), on rejoint l'agence
+      // 2) Join via clé (si elle existe)
       const joinCode = localStorage.getItem("join_code")?.trim() || "";
 
       if (joinCode) {
+        setStatus("Connexion à votre espace…");
+
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
           p_code: joinCode,
         });
 
-        // on nettoie même si erreur
+        // Nettoyer quoi qu'il arrive
         localStorage.removeItem("join_code");
 
-        // si la clé est invalide : on connecte quand même, mais sans rejoindre
+        // Si invalide : on laisse connecté, mais on continue sans rejoindre
         if (joinErr || !res?.ok) {
           router.replace("/dashboard?join=invalid_code");
           return;
         }
 
+        // res.type peut être "FITNESS" ou autre selon ton backend
         router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
         return;
       }
 
-      // Sinon : simple confirmation → dashboard
+      // 3) Si pas de clé → créer agence par défaut (après confirmation email)
+      setStatus("Création de votre espace…");
+
+      const { data: userRes, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userRes?.user) {
+        router.replace("/login?error=user_missing");
+        return;
+      }
+
+      const fullName =
+        (userRes.user.user_metadata as any)?.full_name ||
+        (userRes.user.email?.split("@")[0] ?? "Nouveau compte");
+
+      const defaultAgencyName = `Agence de ${fullName}`;
+
+      // Si déjà créé (ex: user revient sur callback), ça ne doit pas bloquer
+      await supabase.rpc("create_default_agency", { p_name: defaultAgencyName });
+
       router.replace("/dashboard");
-    });
-  }, [searchParams, router, supabase]);
+    }
+
+    run();
+  }, [router, searchParams, supabase]);
 
   return (
     <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
-      Confirmation en cours…
+      {status}
     </div>
   );
 }
