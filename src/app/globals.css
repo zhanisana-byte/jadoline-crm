@@ -22,7 +22,7 @@ h2 {
 }
 
 label {
-  @apply block text-sm font-medium text-slate-700;
+  @apply block text-sm font-medium text-slate-700 mb-1;
 }
 
 .muted {
