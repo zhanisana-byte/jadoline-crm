@@ -45,6 +45,7 @@ export default function ProfilePage() {
     setTimeout(() => setToast(null), 2600);
   };
 
+  // Reload memberships for current user
   const reloadMemberships = async (userId: string) => {
     const { data: ms, error: msErr } = await supabase
       .from("agency_members")
@@ -60,14 +61,18 @@ export default function ProfilePage() {
     const list = (ms || []) as MembershipRow[];
     setMemberships(list);
 
-    if ((!selectedAgencyId || !list.some((x) => x.agency_id === selectedAgencyId)) && list.length) {
+    // ensure selected agency exists
+    if (
+      (!selectedAgencyId || !list.some((x) => x.agency_id === selectedAgencyId)) &&
+      list.length
+    ) {
       setSelectedAgencyId(list[0].agency_id);
     }
 
     return list;
   };
 
-  // 1) LOAD auth + profile + memberships
+  // 1) Load auth + profile + memberships
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -114,7 +119,7 @@ export default function ProfilePage() {
 
   const isOwner = selectedMembership?.role === "OWNER";
 
-  // 2) LOAD members + key for selected agency
+  // 2) Load members + key for selected agency
   useEffect(() => {
     const loadAgency = async () => {
       if (!selectedAgencyId) {
@@ -123,6 +128,7 @@ export default function ProfilePage() {
         return;
       }
 
+      // members list (normalize users_profile: array -> object)
       const { data: mems, error: memErr } = await supabase
         .from("agency_members")
         .select("user_id, role, status, users_profile(full_name, avatar_url)")
@@ -132,9 +138,19 @@ export default function ProfilePage() {
         flash(memErr.message || "Erreur chargement membres");
         setMembers([]);
       } else {
-        setMembers((mems || []) as MemberViewRow[]);
+        const normalized = (mems || []).map((m: any) => ({
+          user_id: m.user_id,
+          role: m.role,
+          status: m.status,
+          users_profile: Array.isArray(m.users_profile)
+            ? m.users_profile[0] ?? null
+            : m.users_profile ?? null,
+        }));
+
+        setMembers(normalized as unknown as MemberViewRow[]);
       }
 
+      // agency key (only OWNER)
       if (!isOwner) {
         setAgencyKey(null);
         return;
@@ -149,18 +165,15 @@ export default function ProfilePage() {
         .limit(1)
         .maybeSingle();
 
-      if (keyErr) {
-        setAgencyKey(null);
-      } else {
-        setAgencyKey((key as AgencyKeyRow) || null);
-      }
+      if (keyErr) setAgencyKey(null);
+      else setAgencyKey((key as AgencyKeyRow) || null);
     };
 
     loadAgency();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgencyId, isOwner]);
 
-  // ACTIONS
+  // Actions
   const onSaveName = async (newName: string) => {
     if (!authUserId) return;
     setBusy(true);
@@ -192,6 +205,7 @@ export default function ProfilePage() {
     if (!selectedAgencyId) return;
     setBusy(true);
 
+    // RPC: generate_agency_key(p_agency_id uuid) returns uuid
     const { data, error } = await supabase.rpc("generate_agency_key", {
       p_agency_id: selectedAgencyId,
     });
@@ -204,6 +218,7 @@ export default function ProfilePage() {
 
     flash("Clé générée ✅");
 
+    // reload active key
     const { data: key } = await supabase
       .from("agency_keys")
       .select("id, active, created_at")
@@ -218,8 +233,10 @@ export default function ProfilePage() {
   };
 
   const onCreateAgency = async (name: string) => {
+    if (!authUserId) return;
     setBusy(true);
 
+    // RPC: create_agency(p_name text) returns uuid
     const { data, error } = await supabase.rpc("create_agency", {
       p_name: name,
     });
@@ -238,8 +255,10 @@ export default function ProfilePage() {
   };
 
   const onJoinAgency = async (code: string) => {
+    if (!authUserId) return;
     setBusy(true);
 
+    // RPC: join_agency_with_code(p_code text) returns uuid
     const { data, error } = await supabase.rpc("join_agency_with_code", {
       p_code: code,
     });
