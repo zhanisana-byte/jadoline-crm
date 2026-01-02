@@ -3,512 +3,574 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type AgencyRow = { id: string; name: string; owner_id: string };
-type MembershipRow = { agency_id: string; role: string; status: string; user_id: string };
-
-type SocialAccountDraft = {
-  platform: "FACEBOOK" | "INSTAGRAM" | "TIKTOK" | "YOUTUBE";
-  asset_type: "PAGE" | "GROUP" | "ACCOUNT" | "CHANNEL";
-  label: string;
-  url: string;
-  username: string;
+type ClientRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  logo_url: string | null;
+  brief_avoid: string | null;
+  created_at: string | null;
 };
 
-export default function AddClientPage() {
+type PlatformItem = {
+  platform: string; // ⚠️ IMPORTANT: doit matcher EXACTEMENT ton ENUM public.client_platforms.platform
+  page_name: string;
+  page_id: string;
+};
+
+export default function ClientsPage() {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
+  const [agencyId, setAgencyId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [agencies, setAgencies] = useState<AgencyRow[]>([]);
-  const [memberships, setMemberships] = useState<MembershipRow[]>([]);
 
-  // form
-  const [agencyId, setAgencyId] = useState<string>("");
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [notes, setNotes] = useState("");
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
 
-  const [socials, setSocials] = useState<SocialAccountDraft[]>([
-    { platform: "FACEBOOK", asset_type: "PAGE", label: "", url: "", username: "" },
-  ]);
+  // ---- Form states (Create Client) ----
+  const [name, setName] = useState("");
+  const [dialCode, setDialCode] = useState("+216");
+  const [phoneLocal, setPhoneLocal] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
-  // recap message (success)
-  const [recap, setRecap] = useState<null | {
-    clientName: string;
-    agencyName: string;
-    socialCount: number;
-  }>(null);
+  const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
 
-  const activeAgencyId =
-    typeof window !== "undefined" ? localStorage.getItem("active_agency_id") : null;
+  // ✅ Mets ici les valeurs EXACTES de ton ENUM platform
+  // Exemple possible: "FACEBOOK" | "INSTAGRAM" | "TIKTOK" | "YOUTUBE"
+  const PLATFORM_OPTIONS = useMemo(
+    () => [
+      { value: "FACEBOOK", label: "Facebook (Page)" },
+      { value: "INSTAGRAM", label: "Instagram" },
+      { value: "TIKTOK", label: "TikTok" },
+      { value: "YOUTUBE", label: "YouTube" },
+    ],
+    []
+  );
 
-  const agencyName = useMemo(() => {
-    const a = agencies.find((x) => x.id === agencyId);
-    return a?.name ?? "—";
-  }, [agencies, agencyId]);
+  const phoneE164 = useMemo(() => {
+    const digits = phoneLocal.replace(/[^\d]/g, "");
+    if (!digits) return "";
+    return `${dialCode}${digits}`;
+  }, [dialCode, phoneLocal]);
 
-  const myAgencies = useMemo(() => {
-    // show agencies where user has ACTIVE membership
-    const activeIds = new Set(
-      memberships.filter((m) => m.status === "ACTIVE").map((m) => m.agency_id)
-    );
-    return agencies.filter((a) => activeIds.has(a.id));
-  }, [agencies, memberships]);
+  // brief_avoid est géré automatiquement par ton TRIGGER SQL ✅
+  // On affiche juste une preview (tous les autres clients)
+  const avoidPreview = useMemo(() => {
+    const others = clients
+      .map((c) => c.name?.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    return others.join(", ");
+  }, [clients]);
 
   useEffect(() => {
-    let alive = true;
+    if (!logoFile) {
+      setLogoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(logoFile);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoFile]);
 
-    async function boot() {
-      setLoading(true);
-      setError(null);
+  async function loadContextAndClients() {
+    setLoading(true);
+    setError(null);
 
-      try {
-        const { data: authData, error: authErr } = await supabase.auth.getUser();
-        if (authErr) throw authErr;
-        const user = authData.user;
-        if (!user) throw new Error("Not authenticated");
-
-        if (!alive) return;
-        setUserId(user.id);
-
-        // memberships
-        const { data: mems, error: memErr } = await supabase
-          .from("agency_members")
-          .select("agency_id, role, status, user_id")
-          .eq("user_id", user.id);
-
-        if (memErr) throw memErr;
-
-        const agencyIds = Array.from(new Set((mems ?? []).map((m: any) => m.agency_id)));
-
-        // agencies
-        const { data: ags, error: agErr } = await supabase
-          .from("agencies")
-          .select("id, name, owner_id")
-          .in("id", agencyIds);
-
-        if (agErr) throw agErr;
-
-        if (!alive) return;
-
-        setMemberships((mems ?? []) as MembershipRow[]);
-        setAgencies((ags ?? []) as AgencyRow[]);
-
-        // default agency: activeAgencyId if valid else first agency
-        const validActive =
-          activeAgencyId && agencyIds.includes(activeAgencyId) ? activeAgencyId : null;
-        const fallback = agencyIds[0] ?? "";
-        setAgencyId(validActive ?? fallback);
-      } catch (e: any) {
-        if (!alive) return;
-        setError(e?.message ?? "Erreur");
-      } finally {
-        if (!alive) return;
-        setLoading(false);
-      }
+    const { data: authData, error: aErr } = await supabase.auth.getUser();
+    if (aErr || !authData?.user) {
+      setError("Non authentifié. Reconnecte-toi.");
+      setLoading(false);
+      return;
     }
 
-    boot();
-    return () => {
-      alive = false;
-    };
-  }, [supabase, activeAgencyId]);
+    const uid = authData.user.id;
+    setUserId(uid);
 
-  function updateSocial(idx: number, patch: Partial<SocialAccountDraft>) {
-    setSocials((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+    // Récupérer agency_id depuis users_profile
+    const { data: profile, error: pErr } = await supabase
+      .from("users_profile")
+      .select("agency_id, role")
+      .eq("user_id", uid)
+      .single();
+
+    if (pErr || !profile?.agency_id) {
+      setError("Profil incomplet: agency_id manquant.");
+      setLoading(false);
+      return;
+    }
+
+    setAgencyId(profile.agency_id as string);
+
+    // Charger les clients (RLS fera le filtrage CM/OWNER si tes policies sont correctes)
+    const { data: rows, error: cErr } = await supabase
+      .from("clients")
+      .select("id, name, phone, logo_url, brief_avoid, created_at")
+      .eq("agency_id", profile.agency_id)
+      .order("created_at", { ascending: false });
+
+    if (cErr) {
+      setError(cErr.message);
+      setClients([]);
+    } else {
+      setClients((rows ?? []) as ClientRow[]);
+    }
+
+    setLoading(false);
   }
 
-  function addSocialRow() {
-    setSocials((prev) => [
+  useEffect(() => {
+    loadContextAndClients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function resetForm() {
+    setName("");
+    setDialCode("+216");
+    setPhoneLocal("");
+    setLogoFile(null);
+    setPlatforms([]);
+    setOk(null);
+    setError(null);
+  }
+
+  function addPlatformRow() {
+    setPlatforms((prev) => [
       ...prev,
-      { platform: "INSTAGRAM", asset_type: "ACCOUNT", label: "", url: "", username: "" },
+      { platform: PLATFORM_OPTIONS[0]?.value ?? "", page_name: "", page_id: "" },
     ]);
   }
 
-  function removeSocialRow(idx: number) {
-    setSocials((prev) => prev.filter((_, i) => i !== idx));
+  function updatePlatformRow(index: number, patch: Partial<PlatformItem>) {
+    setPlatforms((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, ...patch } : p))
+    );
   }
 
-  const cleanedSocials = useMemo(() => {
-    // keep only rows that have at least url OR username OR label
-    return socials.filter((s) => {
-      const hasSomething =
-        s.url.trim().length > 0 || s.username.trim().length > 0 || s.label.trim().length > 0;
-      return hasSomething;
-    });
-  }, [socials]);
+  function removePlatformRow(index: number) {
+    setPlatforms((prev) => prev.filter((_, i) => i !== index));
+  }
 
-  const canSubmit = useMemo(() => {
-    return agencyId && fullName.trim().length >= 2 && !busy;
-  }, [agencyId, fullName, busy]);
+  async function uploadClientLogo(params: {
+    agencyId: string;
+    clientId: string;
+    file: File;
+  }) {
+    const { agencyId, clientId, file } = params;
 
-  async function onSubmit() {
+    if (!file.type.startsWith("image/")) {
+      throw new Error("Le logo doit être une image (png/jpg/webp).");
+    }
+
+    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+    const path = `agencies/${agencyId}/clients/${clientId}/logo.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from("client-logos")
+      .upload(path, file, {
+        upsert: true,
+        contentType: file.type,
+        cacheControl: "3600",
+      });
+
+    if (upErr) throw upErr;
+
+    const { data } = supabase.storage.from("client-logos").getPublicUrl(path);
+    const publicUrl = data?.publicUrl;
+    if (!publicUrl) throw new Error("Impossible de récupérer l’URL publique du logo.");
+
+    const { error: dbErr } = await supabase
+      .from("clients")
+      .update({ logo_url: publicUrl })
+      .eq("id", clientId);
+
+    if (dbErr) throw dbErr;
+
+    return publicUrl;
+  }
+
+  async function onCreateClient() {
+    setOk(null);
     setError(null);
-    setRecap(null);
 
-    if (!userId) return setError("Utilisateur non détecté.");
-    if (!agencyId) return setError("Choisis une agence.");
-    if (fullName.trim().length < 2) return setError("Nom client obligatoire.");
+    if (!agencyId || !userId) {
+      setError("Contexte manquant (agency/user). Reconnecte-toi.");
+      return;
+    }
 
-    setBusy(true);
+    const cleanName = name.trim();
+    if (!cleanName) {
+      setError("Le nom du client est obligatoire.");
+      return;
+    }
+
+    // Téléphone + indicatif: optionnel ? (tu as dit besoin tel + indicateur, donc on le met requis)
+    const cleanPhone = phoneE164.trim();
+    if (!cleanPhone || !cleanPhone.startsWith("+") || cleanPhone.length < 9) {
+      setError("Téléphone invalide. Exemple: +21612345678");
+      return;
+    }
+
+    // Vérifier plateformes: si ligne ajoutée, page_id recommandé
+    const badPlatform = platforms.find(
+      (p) => p.platform && (!p.page_id.trim() || !p.page_name.trim())
+    );
+    if (badPlatform) {
+      setError("Chaque réseau ajouté doit avoir un Nom de page/compte + un ID/URL.");
+      return;
+    }
+
+    setSaving(true);
+
     try {
-      // 1) insert client
+      // 1) Insert client (⚠️ brief_avoid laissé au trigger SQL)
       const { data: client, error: cErr } = await supabase
         .from("clients")
         .insert({
           agency_id: agencyId,
-          full_name: fullName.trim(),
-          phone: phone.trim() || null,
-          email: email.trim() || null,
-          notes: notes.trim() || null,
+          name: cleanName,
+          phone: cleanPhone,
           created_by: userId,
         })
-        .select("id, full_name")
+        .select("id, name")
         .single();
 
       if (cErr) throw cErr;
-      if (!client?.id) throw new Error("Insertion client échouée.");
+      if (!client?.id) throw new Error("Client non créé (id manquant).");
 
-      // 2) insert socials (optional)
-      if (cleanedSocials.length > 0) {
-        const payload = cleanedSocials.map((s) => ({
-          agency_id: agencyId,
-          client_id: client.id,
-          platform: s.platform,
-          asset_type: s.asset_type,
-          label: s.label.trim() || null,
-          url: s.url.trim() || null,
-          username: s.username.trim() || null,
-        }));
+      const clientId = client.id as string;
 
-        const { error: sErr } = await supabase.from("client_social_accounts").insert(payload);
-        if (sErr) throw sErr;
+      // 2) Upload logo (optionnel)
+      if (logoFile) {
+        await uploadClientLogo({ agencyId, clientId, file: logoFile });
       }
 
-      // 3) recap success
-      setRecap({
-        clientName: client.full_name,
-        agencyName,
-        socialCount: cleanedSocials.length,
-      });
+      // 3) Insert plateformes (optionnel)
+      if (platforms.length > 0) {
+        const rows = platforms
+          .filter((p) => p.platform && p.page_id.trim() && p.page_name.trim())
+          .map((p) => ({
+            client_id: clientId,
+            platform: p.platform, // ⚠️ doit matcher ton ENUM
+            page_name: p.page_name.trim(),
+            page_id: p.page_id.trim(),
+          }));
 
-      // reset form (keep agency)
-      setFullName("");
-      setPhone("");
-      setEmail("");
-      setNotes("");
-      setSocials([{ platform: "FACEBOOK", asset_type: "PAGE", label: "", url: "", username: "" }]);
+        if (rows.length) {
+          const { error: pErr } = await supabase.from("client_platforms").insert(rows);
+          if (pErr) throw pErr;
+        }
+      }
+
+      setOk("✅ Client créé avec succès (logo + réseaux enregistrés).");
+
+      // 4) Reload clients (pour voir brief_avoid mis à jour par trigger)
+      await loadContextAndClients();
+
+      // 5) Reset form
+      resetForm();
     } catch (e: any) {
-      setError(e?.message ?? "Erreur");
+      setError(e?.message ?? "Erreur inconnue.");
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
-  }
-
-  function onAgencyChange(newId: string) {
-    setAgencyId(newId);
-    // make it the new "active agency" for consistency
-    if (typeof window !== "undefined") {
-      localStorage.setItem("active_agency_id", newId);
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="p-6 md:p-8">
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">Chargement…</div>
-      </div>
-    );
   }
 
   return (
-    <div className="p-6 md:p-8 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Ajouter un client</h1>
-        <p className="text-sm text-slate-500">
-          Choisis l’agence, ajoute les infos, puis les réseaux sociaux.
-        </p>
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Clients</h1>
+          <p style={{ margin: "6px 0 0", color: "#64748b" }}>
+            Création client: Nom + Téléphone (indicatif) + Logo (optionnel) + Réseaux sociaux
+          </p>
+        </div>
+        <button
+          onClick={() => loadContextAndClients()}
+          disabled={loading}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #e2e8f0",
+            background: "white",
+            cursor: "pointer",
+          }}
+        >
+          ↻ Refresh
+        </button>
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b" }}>
           {error}
         </div>
       ) : null}
 
-      {recap ? (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          <div className="font-semibold">✅ Client créé avec succès</div>
-          <div className="mt-1">
-            <span className="font-medium">Client :</span> {recap.clientName}
-          </div>
-          <div>
-            <span className="font-medium">Agence :</span> {recap.agencyName}
-          </div>
-          <div>
-            <span className="font-medium">Réseaux ajoutés :</span> {recap.socialCount}
-          </div>
+      {ok ? (
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#ecfdf5", border: "1px solid #bbf7d0", color: "#065f46" }}>
+          {ok}
         </div>
       ) : null}
 
-      {/* FORM */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* left */}
-        <div className="lg:col-span-2 space-y-4">
-          <Section title="Agence">
-            <label className="text-sm font-medium text-slate-700">Choisir une agence</label>
-            <select
-              value={agencyId}
-              onChange={(e) => onAgencyChange(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-slate-200"
-            >
-              {myAgencies.length === 0 ? (
-                <option value="">Aucune agence</option>
-              ) : (
-                myAgencies.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))
-              )}
-            </select>
-            <p className="mt-2 text-xs text-slate-500">
-              Par défaut : agence active. Tu peux la changer avant validation.
-            </p>
-          </Section>
+      {/* Create Card */}
+      <div
+        style={{
+          marginTop: 16,
+          padding: 16,
+          borderRadius: 16,
+          border: "1px solid #e2e8f0",
+          background: "white",
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Créer un client</h2>
 
-          <Section title="Informations client">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Nom complet *">
-                <input
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Ex: The Gate Restaurant"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                />
-              </Field>
-
-              <Field label="Téléphone">
-                <input
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="Ex: 50 000 000"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                />
-              </Field>
-
-              <Field label="Email">
-                <input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="client@email.com"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                />
-              </Field>
-
-              <Field label="Notes">
-                <input
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Infos utiles…"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                />
-              </Field>
-            </div>
-          </Section>
-
-          <Section
-            title="Réseaux sociaux"
-            right={
-              <button
-                type="button"
-                onClick={addSocialRow}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
-              >
-                + Ajouter un réseau
-              </button>
-            }
-          >
-            <div className="space-y-3">
-              {socials.map((s, idx) => (
-                <div
-                  key={idx}
-                  className="rounded-2xl border border-slate-200 bg-white p-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-900">
-                      Réseau #{idx + 1}
-                    </div>
-                    {socials.length > 1 ? (
-                      <button
-                        type="button"
-                        onClick={() => removeSocialRow(idx)}
-                        className="text-sm text-rose-700 hover:underline"
-                      >
-                        Supprimer
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <Field label="Plateforme">
-                      <select
-                        value={s.platform}
-                        onChange={(e) =>
-                          updateSocial(idx, { platform: e.target.value as any })
-                        }
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-slate-200"
-                      >
-                        <option value="FACEBOOK">Facebook</option>
-                        <option value="INSTAGRAM">Instagram</option>
-                        <option value="TIKTOK">TikTok</option>
-                        <option value="YOUTUBE">YouTube</option>
-                      </select>
-                    </Field>
-
-                    <Field label="Type">
-                      <select
-                        value={s.asset_type}
-                        onChange={(e) =>
-                          updateSocial(idx, { asset_type: e.target.value as any })
-                        }
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-slate-200"
-                      >
-                        <option value="PAGE">Page</option>
-                        <option value="GROUP">Groupe</option>
-                        <option value="ACCOUNT">Compte</option>
-                        <option value="CHANNEL">Chaîne</option>
-                      </select>
-                    </Field>
-
-                    <Field label="Label (optionnel)">
-                      <input
-                        value={s.label}
-                        onChange={(e) => updateSocial(idx, { label: e.target.value })}
-                        placeholder="Ex: Page principale"
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                      />
-                    </Field>
-
-                    <Field label="Username (optionnel)">
-                      <input
-                        value={s.username}
-                        onChange={(e) =>
-                          updateSocial(idx, { username: e.target.value })
-                        }
-                        placeholder="Ex: @thegate"
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                      />
-                    </Field>
-
-                    <div className="md:col-span-2">
-                      <Field label="URL (optionnel)">
-                        <input
-                          value={s.url}
-                          onChange={(e) => updateSocial(idx, { url: e.target.value })}
-                          placeholder="https://..."
-                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                        />
-                      </Field>
-                    </div>
-                  </div>
-
-                  <p className="mt-2 text-xs text-slate-500">
-                    Tu peux laisser vide un champ. Une ligne est enregistrée si elle contient au
-                    moins un élément (url/username/label).
-                  </p>
-                </div>
-              ))}
-            </div>
-          </Section>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={onSubmit}
-              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {busy ? "Validation..." : "Valider & créer le client"}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setRecap(null);
-              }}
-              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium hover:bg-slate-50"
-            >
-              Effacer message
-            </button>
+        {/* Preview brief_avoid */}
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Texte à éviter (auto)</div>
+          <div style={{ color: "#475569", fontSize: 13 }}>
+            {avoidPreview ? avoidPreview : "Aucun autre client pour le moment."}
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>
+            ⚙️ Géré automatiquement par le trigger SQL (sync après création/rename/suppression).
           </div>
         </div>
 
-        {/* right recap */}
-        <div className="space-y-4">
-          <Section title="Récap avant validation">
-            <ul className="text-sm text-slate-700 space-y-2">
-              <li>
-                <span className="text-slate-500">Agence :</span>{" "}
-                <span className="font-semibold">{agencyName}</span>
-              </li>
-              <li>
-                <span className="text-slate-500">Client :</span>{" "}
-                <span className="font-semibold">{fullName.trim() || "—"}</span>
-              </li>
-              <li>
-                <span className="text-slate-500">Réseaux à enregistrer :</span>{" "}
-                <span className="font-semibold">{cleanedSocials.length}</span>
-              </li>
-            </ul>
-            <p className="mt-3 text-xs text-slate-500">
-              Après validation, tu auras un message avec le récap.
-            </p>
-          </Section>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+          <div>
+            <label style={{ fontSize: 13, color: "#0f172a" }}>Nom client *</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex: BBGym"
+              style={inputStyle}
+            />
+          </div>
 
-          <Section title="Note">
-            <p className="text-sm text-slate-600">
-              Plus tard, on ajoutera “Accès publication” (OAuth) par réseau : TikTok / Meta /
-              YouTube. Pour l’instant on stocke les infos et on teste le flux.
-            </p>
-          </Section>
+          <div>
+            <label style={{ fontSize: 13, color: "#0f172a" }}>Téléphone (indicatif + numéro) *</label>
+            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 10 }}>
+              <select value={dialCode} onChange={(e) => setDialCode(e.target.value)} style={inputStyle}>
+                <option value="+216">+216 (TN)</option>
+                <option value="+33">+33 (FR)</option>
+                <option value="+971">+971 (UAE)</option>
+                <option value="+1">+1 (US)</option>
+                <option value="+39">+39 (IT)</option>
+              </select>
+              <input
+                value={phoneLocal}
+                onChange={(e) => setPhoneLocal(e.target.value)}
+                placeholder="Ex: 12345678"
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
+              Format stocké: <b>{phoneE164 || "—"}</b>
+            </div>
+          </div>
+        </div>
+
+        {/* Logo */}
+        <div style={{ marginTop: 14 }}>
+          <label style={{ fontSize: 13, color: "#0f172a" }}>Logo (optionnel)</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 8 }}>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+            />
+            {logoPreview ? (
+              <img
+                src={logoPreview}
+                alt="Preview logo"
+                style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }}
+              />
+            ) : (
+              <div style={{ width: 64, height: 64, borderRadius: 14, border: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
+                Logo
+              </div>
+            )}
+          </div>
+          <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
+            Bucket attendu: <b>client-logos</b> (public). Si tu as un autre nom, change-le dans le code.
+          </div>
+        </div>
+
+        {/* Platforms */}
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 700 }}>Réseaux sociaux (optionnel)</div>
+              <div style={{ color: "#64748b", fontSize: 12 }}>
+                Ajoute les pages/comptes manuellement maintenant (OAuth après).
+              </div>
+            </div>
+
+            <button onClick={addPlatformRow} type="button" style={secondaryBtn}>
+              + Ajouter un réseau
+            </button>
+          </div>
+
+          {platforms.length === 0 ? (
+            <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 13 }}>Aucun réseau ajouté.</div>
+          ) : (
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              {platforms.map((p, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 14,
+                    padding: 12,
+                    background: "#ffffff",
+                    display: "grid",
+                    gridTemplateColumns: "180px 1fr 1fr 48px",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <select
+                    value={p.platform}
+                    onChange={(e) => updatePlatformRow(idx, { platform: e.target.value })}
+                    style={inputStyle}
+                  >
+                    {PLATFORM_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    value={p.page_name}
+                    onChange={(e) => updatePlatformRow(idx, { page_name: e.target.value })}
+                    placeholder="Nom de page/compte"
+                    style={inputStyle}
+                  />
+
+                  <input
+                    value={p.page_id}
+                    onChange={(e) => updatePlatformRow(idx, { page_id: e.target.value })}
+                    placeholder="ID ou URL (ex: page_id / handle / channel_id)"
+                    style={inputStyle}
+                  />
+
+                  <button
+                    onClick={() => removePlatformRow(idx)}
+                    type="button"
+                    title="Supprimer"
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 12,
+                      border: "1px solid #fee2e2",
+                      background: "#fff1f2",
+                      color: "#b91c1c",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+          <button onClick={onCreateClient} disabled={saving || loading} style={primaryBtn}>
+            {saving ? "Création..." : "Créer le client"}
+          </button>
+          <button onClick={resetForm} disabled={saving} style={secondaryBtn}>
+            Reset
+          </button>
         </div>
       </div>
-    </div>
-  );
-}
 
-/** UI helpers */
-function Section({
-  title,
-  right,
-  children,
-}: {
-  title: string;
-  right?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-        {right}
+      {/* List */}
+      <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", background: "white" }}>
+        <h2 style={{ margin: 0 }}>Liste des clients</h2>
+
+        {loading ? (
+          <div style={{ marginTop: 10, color: "#64748b" }}>Chargement...</div>
+        ) : clients.length === 0 ? (
+          <div style={{ marginTop: 10, color: "#94a3b8" }}>Aucun client pour le moment.</div>
+        ) : (
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            {clients.map((c) => (
+              <div
+                key={c.id}
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 16,
+                  padding: 12,
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  {c.logo_url ? (
+                    <img
+                      src={c.logo_url}
+                      alt={c.name}
+                      style={{ width: 48, height: 48, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }}
+                    />
+                  ) : (
+                    <div style={{ width: 48, height: 48, borderRadius: 14, border: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
+                      —
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ fontWeight: 800 }}>{c.name}</div>
+                    <div style={{ color: "#64748b", fontSize: 13 }}>
+                      {c.phone || "—"}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ maxWidth: 520, textAlign: "right" }}>
+                  <div style={{ color: "#94a3b8", fontSize: 12 }}>Texte à éviter (auto)</div>
+                  <div style={{ color: "#475569", fontSize: 13 }}>
+                    {c.brief_avoid ? c.brief_avoid : "—"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="mt-4">{children}</div>
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-sm font-medium text-slate-700">{label}</label>
-      <div className="mt-1">{children}</div>
-    </div>
-  );
-}
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #e2e8f0",
+  outline: "none",
+};
+
+const primaryBtn: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #0f172a",
+  background: "#0f172a",
+  color: "white",
+  cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #e2e8f0",
+  background: "white",
+  cursor: "pointer",
+};
