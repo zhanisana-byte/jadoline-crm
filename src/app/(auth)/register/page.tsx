@@ -35,7 +35,7 @@ export default function RegisterPage() {
       // 2) session check (si email confirmation ON => pas de session)
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
-        setMsg("Compte créé ✅ Vérifie ton email, puis reconnecte-toi.");
+        setMsg("Compte créé ✅ Veuillez vérifier votre email, puis vous reconnecter.");
         return;
       }
 
@@ -55,17 +55,15 @@ export default function RegisterPage() {
       }
 
       // 4) sinon => créer agence par défaut (nom auto)
-      // ⚠️ Avoir une RPC côté Supabase (recommandé) : create_default_agency(p_name text)
-      // qui crée l'agence si absente + met owner + users_profile.agency_id.
       const defaultAgencyName = `Agence de ${fullName.trim() || "Nouveau compte"}`;
 
-      const { data: created, error: createErr } = await supabase.rpc("create_default_agency", {
+      const { error: createErr } = await supabase.rpc("create_default_agency", {
         p_name: defaultAgencyName,
       });
 
       if (createErr) {
         // Fallback message: le compte est créé mais l'agence auto a échoué
-        setMsg("Compte créé ✅ (Agence non initialisée). Contact admin.");
+        setMsg("Compte créé ✅ (Agence non initialisée). Veuillez contacter l’administrateur.");
         return;
       }
 
@@ -84,8 +82,8 @@ export default function RegisterPage() {
           <h1 className="auth-title">Créer un compte</h1>
           <p className="auth-subtitle">
             {hasCode
-              ? "Tu rejoins un espace existant via une clé."
-              : "Tu crées ton propre espace (agence / freelance)."}
+              ? "Vous rejoignez un espace existant à l’aide d’une clé."
+              : "Vous créez votre propre espace (agence / freelance)."}
           </p>
 
           {msg && <div className="alert alert-info">{msg}</div>}
@@ -101,7 +99,8 @@ export default function RegisterPage() {
                 autoComplete="off"
               />
               <p className="helper">
-                Si tu as une clé, colle-la ici. Sinon laisse vide pour créer ton espace.
+                Si vous disposez d’une clé, collez-la ici. Sinon, laissez ce champ vide pour créer
+                votre espace.
               </p>
             </div>
 
@@ -113,7 +112,7 @@ export default function RegisterPage() {
                 className="input"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Ex: Sana Zhani"
+                placeholder="Ex : Sana Zhani"
               />
             </div>
 
@@ -138,16 +137,20 @@ export default function RegisterPage() {
                 placeholder="••••••••"
                 autoComplete="new-password"
               />
-              <p className="helper">8 caractères minimum recommandé.</p>
+              <p className="helper">8 caractères minimum recommandés.</p>
             </div>
 
             <button className="btn-primary w-full" disabled={loading}>
-              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer mon compte"}
+              {loading
+                ? "Création..."
+                : hasCode
+                ? "Rejoindre avec la clé"
+                : "Créer votre compte"}
             </button>
           </form>
 
           <p className="footer-link">
-            Déjà un compte ? <a href="/login">Connexion</a>
+            Vous avez déjà un compte ? <a href="/login">Connexion</a>
           </p>
         </div>
       </div>
