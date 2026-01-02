@@ -42,9 +42,12 @@ type MemberViewRow = {
 };
 
 type AgencyKeyRow = {
-  code: string;
-  is_active: boolean;
-  created_at: string;
+  // certains schémas ont "code", d'autres utilisent "id" comme clé
+  code?: string | null;
+  id?: string | null;
+  is_active?: boolean;
+  active?: boolean;
+  created_at?: string;
 };
 
 /* ================= HELPERS ================= */
@@ -54,13 +57,17 @@ const firstAgency = (a?: AgencyRow | AgencyRow[] | null): AgencyRow | null => {
   return Array.isArray(a) ? a[0] ?? null : a;
 };
 
-const safeDate = (iso: string) => {
+const safeDate = (iso?: string | null) => {
+  if (!iso) return "—";
   try {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
   }
 };
+
+const humanErr = (e: any) =>
+  e?.message || e?.error_description || e?.hint || "Erreur inconnue";
 
 /* ================= UI ATOMS ================= */
 
@@ -118,7 +125,7 @@ const Btn = ({
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  variant?: "primary" | "outline";
+  variant?: "primary" | "outline" | "danger";
   type?: "button" | "submit";
 }) => {
   const base =
@@ -126,6 +133,8 @@ const Btn = ({
   const cls =
     variant === "primary"
       ? "bg-slate-900 text-white hover:bg-slate-800"
+      : variant === "danger"
+      ? "bg-red-600 text-white hover:bg-red-700"
       : "border border-slate-200 text-slate-800 hover:bg-slate-50";
   return (
     <button
@@ -190,10 +199,28 @@ export default function ProfilePage() {
 
   const flash = (m: string) => {
     setToast(m);
-    setTimeout(() => setToast(null), 2500);
+    setTimeout(() => setToast(null), 2600);
   };
 
   /* ============ LOAD USER + PROFILE + MEMBERSHIPS ============ */
+
+  const reloadMemberships = async (userId: string) => {
+    const { data: ms, error } = await supabase
+      .from("agency_members")
+      .select(
+        "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id,name)"
+      )
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error("reloadMemberships error:", error);
+      return [];
+    }
+
+    const list = (ms || []) as unknown as MembershipRow[];
+    setMemberships(list);
+    return list;
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -212,13 +239,14 @@ export default function ProfilePage() {
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user.email_confirmed_at || (user as any).confirmed_at));
 
-      const { data: p } = await supabase
+      const { data: p, error: pErr } = await supabase
         .from("users_profile")
         .select("user_id, full_name, role, created_at, avatar_url")
         .eq("user_id", user.id)
         .single();
 
-      if (!p) {
+      if (pErr || !p) {
+        console.error("profile load error:", pErr);
         flash("Profil introuvable");
         setLoading(false);
         return;
@@ -227,15 +255,7 @@ export default function ProfilePage() {
       setProfile(p);
       setFullName(p.full_name ?? "");
 
-      const { data: ms } = await supabase
-        .from("agency_members")
-        .select(
-          "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id,name)"
-        )
-        .eq("user_id", user.id);
-
-      const list = (ms || []) as unknown as MembershipRow[];
-      setMemberships(list);
+      const list = await reloadMemberships(user.id);
 
       if (list.length && !selectedAgencyId) {
         setSelectedAgencyId(list[0].agency_id);
@@ -267,7 +287,7 @@ export default function ProfilePage() {
     }
 
     const loadAgency = async () => {
-      const { data: members } = await supabase
+      const { data: members, error: mErr } = await supabase
         .from("agency_members")
         .select(
           "user_id, member_role, workspace_role, joined_at, users_profile(full_name, avatar_url)"
@@ -275,10 +295,13 @@ export default function ProfilePage() {
         .eq("agency_id", selectedAgencyId)
         .order("joined_at", { ascending: true });
 
+      if (mErr) console.error("load agency members error:", mErr);
+
       setAgencyMembers((members || []) as unknown as MemberViewRow[]);
 
       if (isOwner) {
-        const { data: key } = await supabase
+        // essayer code d'abord
+        const { data: key1 } = await supabase
           .from("agency_keys")
           .select("code, is_active, created_at")
           .eq("agency_id", selectedAgencyId)
@@ -287,7 +310,22 @@ export default function ProfilePage() {
           .limit(1)
           .maybeSingle();
 
-        setAgencyKey((key as AgencyKeyRow) || null);
+        if (key1) {
+          setAgencyKey(key1 as any);
+          return;
+        }
+
+        // fallback si la table a "id/active"
+        const { data: key2 } = await supabase
+          .from("agency_keys")
+          .select("id, active, created_at")
+          .eq("agency_id", selectedAgencyId)
+          .eq("active", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        setAgencyKey((key2 as any) || null);
       } else {
         setAgencyKey(null);
       }
@@ -308,7 +346,7 @@ export default function ProfilePage() {
       .update({ full_name: fullName })
       .eq("user_id", authUserId);
 
-    if (error) flash("Erreur mise à jour");
+    if (error) flash("Erreur mise à jour: " + humanErr(error));
     else {
       setProfile((p) => (p ? { ...p, full_name: fullName } : p));
       setEditName(false);
@@ -326,8 +364,15 @@ export default function ProfilePage() {
       p_name: newAgencyName.trim(),
     });
 
-    if (error || !data) {
-      flash("Impossible de créer l’espace");
+    if (error) {
+      console.error("create_agency error:", error);
+      flash(humanErr(error));
+      setBusy(false);
+      return;
+    }
+
+    if (!data) {
+      flash("Aucune donnée retournée (create_agency). Vérifie la fonction SQL.");
       setBusy(false);
       return;
     }
@@ -335,15 +380,15 @@ export default function ProfilePage() {
     flash("Espace créé ✅");
     setNewAgencyName("");
 
-    const { data: ms } = await supabase
-      .from("agency_members")
-      .select(
-        "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id,name)"
-      )
-      .eq("user_id", authUserId);
-
-    setMemberships((ms || []) as unknown as MembershipRow[]);
+    const list = await reloadMemberships(authUserId);
+    // set active = agencyId renvoyé
     setSelectedAgencyId(String(data));
+
+    // si pour une raison X, membership pas encore visible, fallback sur premier
+    if (!list.length) {
+      setSelectedAgencyId(String(data));
+    }
+
     setBusy(false);
   };
 
@@ -355,7 +400,14 @@ export default function ProfilePage() {
       p_code: joinCode.trim(),
     });
 
-    if (error || !data) {
+    if (error) {
+      console.error("join_agency_with_code error:", error);
+      flash(humanErr(error));
+      setBusy(false);
+      return;
+    }
+
+    if (!data) {
       flash("Clé invalide / accès refusé");
       setBusy(false);
       return;
@@ -364,15 +416,44 @@ export default function ProfilePage() {
     flash("Agence rejointe ✅");
     setJoinCode("");
 
-    const { data: ms } = await supabase
-      .from("agency_members")
-      .select(
-        "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id,name)"
-      )
-      .eq("user_id", authUserId);
-
-    setMemberships((ms || []) as unknown as MembershipRow[]);
+    await reloadMemberships(authUserId);
     setSelectedAgencyId(String(data));
+    setBusy(false);
+  };
+
+  const generateKey = async () => {
+    if (!selectedAgencyId || !isOwner) return;
+    setBusy(true);
+
+    const { data, error } = await supabase.rpc("generate_agency_key", {
+      p_agency_id: selectedAgencyId,
+    });
+
+    if (error) {
+      console.error("generate_agency_key error:", error);
+      flash(humanErr(error));
+      setBusy(false);
+      return;
+    }
+
+    if (!data) {
+      flash("Clé non générée (RPC n’a rien retourné)");
+      setBusy(false);
+      return;
+    }
+
+    // On rafraîchit l’affichage: soit code=uuid, soit id=uuid
+    const newCode = String(data);
+    setAgencyKey((prev) => ({
+      ...(prev || {}),
+      code: newCode,
+      id: newCode,
+      is_active: true,
+      active: true,
+      created_at: new Date().toISOString(),
+    }));
+
+    flash("Clé générée ✅");
     setBusy(false);
   };
 
@@ -389,6 +470,8 @@ export default function ProfilePage() {
 
   if (loading) return <div className="p-6">Chargement…</div>;
   if (!profile) return <div className="p-6">Profil introuvable</div>;
+
+  const keyValue = (agencyKey?.code || agencyKey?.id || "") as string;
 
   return (
     <div className="max-w-6xl mx-auto p-6">
@@ -549,22 +632,45 @@ export default function ProfilePage() {
                     <div className="text-xl font-semibold text-slate-900">
                       {selectedAgency?.name || "—"}
                     </div>
+                    {selectedAgencyId && (
+                      <div className="text-xs text-slate-500 mt-1">
+                        ID: {selectedAgencyId}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
                     {isOwner ? (
-                      agencyKey?.code ? (
+                      keyValue ? (
                         <>
-                          <Btn onClick={() => copy(agencyKey.code)}>Copier clé</Btn>
+                          <Btn onClick={() => copy(keyValue)}>Copier clé</Btn>
                         </>
                       ) : (
-                        <Badge tone="amber">Aucune clé active</Badge>
+                        <>
+                          <Btn
+                            variant="primary"
+                            disabled={busy || !selectedAgencyId}
+                            onClick={generateKey}
+                          >
+                            Générer une clé
+                          </Btn>
+                        </>
                       )
                     ) : (
                       <Badge tone="amber">Clé réservée au OWNER</Badge>
                     )}
                   </div>
                 </div>
+
+                {isOwner && keyValue && (
+                  <div className="mt-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Clé d’invitation</div>
+                    <div className="mt-1 font-mono text-sm break-all">{keyValue}</div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      Créée le {safeDate(agencyKey?.created_at || null)}
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
                   <div className="p-4 bg-slate-50 border-b border-slate-100 font-semibold">
@@ -610,7 +716,7 @@ export default function ProfilePage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input
                   className="md:col-span-2 w-full border border-slate-200 rounded-xl px-3 py-2"
-                  placeholder="Nom de l’agence (ex: Sana Agency)"
+                  placeholder="Nom de l’agence (ex: Dealink)"
                   value={newAgencyName}
                   onChange={(e) => setNewAgencyName(e.target.value)}
                 />
@@ -637,6 +743,11 @@ export default function ProfilePage() {
                 >
                   Rejoindre
                 </Btn>
+              </div>
+
+              <div className="text-xs text-slate-500">
+                Astuce : si “Impossible de créer espace”, tu verras maintenant le
+                vrai message Supabase (permissions/RLS/func).
               </div>
             </CardBody>
           </Card>
