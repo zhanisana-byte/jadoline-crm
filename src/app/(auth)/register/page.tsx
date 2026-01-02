@@ -81,7 +81,7 @@ export default function RegisterPage() {
 
       if (createErr) {
         setMsg(
-          "Compte créé ✅ mais l’espace n’a pas pu être initialisé. Veuillez contacter l’administrateur."
+          "Compte créé ✅ Veuillez confirmer votre adresse email afin d’activer votre compte."
         );
         return;
       }
