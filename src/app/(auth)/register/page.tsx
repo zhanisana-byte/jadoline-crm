@@ -24,7 +24,13 @@ export default function RegisterPage() {
     setMsg(null);
 
     try {
-      // 1) SIGN UP — FORCER LA REDIRECTION EMAIL VERS /callback
+      const code = joinCode.trim();
+
+      // ✅ Stocker la clé pour l’utiliser après confirmation email (dans /callback)
+      if (code) localStorage.setItem("join_code", code);
+      else localStorage.removeItem("join_code");
+
+      // 1) SIGN UP — redirection email vers /callback
       const { error: signErr } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -35,7 +41,6 @@ export default function RegisterPage() {
       });
 
       if (signErr) {
-        // Email déjà existant
         if (
           signErr.message.includes("already registered") ||
           signErr.message.includes("User already registered")
@@ -57,10 +62,10 @@ export default function RegisterPage() {
         return;
       }
 
-      // 3) Rejoindre via clé
-      if (hasCode) {
+      // 3) Si session existe (cas rare si email confirmation off), rejoindre via clé
+      if (code) {
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
-          p_code: joinCode.trim(),
+          p_code: code,
         });
 
         if (joinErr || !res?.ok) {
@@ -68,17 +73,19 @@ export default function RegisterPage() {
           return;
         }
 
+        localStorage.removeItem("join_code");
         router.push(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
         return;
       }
 
-      // 4) Créer une agence par défaut
+      // 4) Créer une agence par défaut si pas de clé
       const defaultAgencyName = `Agence de ${fullName.trim() || "Nouveau compte"}`;
 
       const { error: createErr } = await supabase.rpc("create_default_agency", {
         p_name: defaultAgencyName,
       });
 
+      // Si email confirmation ON: souvent on arrive ici sans session → ok
       if (createErr) {
         setMsg(
           "Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte."
