@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+import { PhoneInput } from "react-international-phone";
+import "react-international-phone/style.css";
+
 type ClientRow = {
   id: string;
   name: string;
@@ -13,7 +16,7 @@ type ClientRow = {
 };
 
 type PlatformItem = {
-  platform: string; // ⚠️ IMPORTANT: doit matcher EXACTEMENT ton ENUM public.client_platforms.platform
+  platform: string; // doit matcher ton enum (temporaire tant qu'on fait pas OAuth)
   page_name: string;
   page_id: string;
 };
@@ -31,17 +34,14 @@ export default function ClientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // ---- Form states (Create Client) ----
+  // ---- Form states ----
   const [name, setName] = useState("");
-  const [dialCode, setDialCode] = useState("+216");
-  const [phoneLocal, setPhoneLocal] = useState("");
+  const [phoneE164, setPhoneE164] = useState(""); // ✅ stocke directement +XXX...
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-
   const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
 
-  // ✅ Mets ici les valeurs EXACTES de ton ENUM platform
-  // Exemple possible: "FACEBOOK" | "INSTAGRAM" | "TIKTOK" | "YOUTUBE"
+  // ✅ Mets ici les valeurs EXACTES de ton ENUM platform (temporaire)
   const PLATFORM_OPTIONS = useMemo(
     () => [
       { value: "FACEBOOK", label: "Facebook (Page)" },
@@ -52,14 +52,7 @@ export default function ClientsPage() {
     []
   );
 
-  const phoneE164 = useMemo(() => {
-    const digits = phoneLocal.replace(/[^\d]/g, "");
-    if (!digits) return "";
-    return `${dialCode}${digits}`;
-  }, [dialCode, phoneLocal]);
-
-  // brief_avoid est géré automatiquement par ton TRIGGER SQL ✅
-  // On affiche juste une preview (tous les autres clients)
+  // brief_avoid est géré automatiquement par trigger SQL
   const avoidPreview = useMemo(() => {
     const others = clients
       .map((c) => c.name?.trim())
@@ -92,7 +85,7 @@ export default function ClientsPage() {
     const uid = authData.user.id;
     setUserId(uid);
 
-    // Récupérer agency_id depuis users_profile
+    // agency_id depuis users_profile
     const { data: profile, error: pErr } = await supabase
       .from("users_profile")
       .select("agency_id, role")
@@ -105,13 +98,13 @@ export default function ClientsPage() {
       return;
     }
 
-    setAgencyId(profile.agency_id as string);
+    const agid = profile.agency_id as string;
+    setAgencyId(agid);
 
-    // Charger les clients (RLS fera le filtrage CM/OWNER si tes policies sont correctes)
     const { data: rows, error: cErr } = await supabase
       .from("clients")
       .select("id, name, phone, logo_url, brief_avoid, created_at")
-      .eq("agency_id", profile.agency_id)
+      .eq("agency_id", agid)
       .order("created_at", { ascending: false });
 
     if (cErr) {
@@ -131,8 +124,7 @@ export default function ClientsPage() {
 
   function resetForm() {
     setName("");
-    setDialCode("+216");
-    setPhoneLocal("");
+    setPhoneE164("");
     setLogoFile(null);
     setPlatforms([]);
     setOk(null);
@@ -156,6 +148,14 @@ export default function ClientsPage() {
     setPlatforms((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function isValidE164(p: string) {
+    // E.164 simple: + puis 8-15 chiffres
+    if (!p) return false;
+    if (!p.startsWith("+")) return false;
+    const digits = p.replace(/[^\d]/g, "");
+    return digits.length >= 8 && digits.length <= 15;
+  }
+
   async function uploadClientLogo(params: {
     agencyId: string;
     clientId: string;
@@ -171,7 +171,7 @@ export default function ClientsPage() {
     const path = `agencies/${agencyId}/clients/${clientId}/logo.${ext}`;
 
     const { error: upErr } = await supabase.storage
-      .from("client-logos")
+      .from("client-logos") // ✅ bucket
       .upload(path, file, {
         upsert: true,
         contentType: file.type,
@@ -209,26 +209,26 @@ export default function ClientsPage() {
       return;
     }
 
-    // Téléphone + indicatif: optionnel ? (tu as dit besoin tel + indicateur, donc on le met requis)
+    // ✅ Téléphone requis (tu as dit obligatoire)
     const cleanPhone = phoneE164.trim();
-    if (!cleanPhone || !cleanPhone.startsWith("+") || cleanPhone.length < 9) {
-      setError("Téléphone invalide. Exemple: +21612345678");
+    if (!isValidE164(cleanPhone)) {
+      setError("Téléphone invalide. Exemple: +21620121521");
       return;
     }
 
-    // Vérifier plateformes: si ligne ajoutée, page_id recommandé
+    // RS manuel: si une ligne existe, exiger nom+id (temporaire)
     const badPlatform = platforms.find(
       (p) => p.platform && (!p.page_id.trim() || !p.page_name.trim())
     );
     if (badPlatform) {
-      setError("Chaque réseau ajouté doit avoir un Nom de page/compte + un ID/URL.");
+      setError("Chaque réseau ajouté doit avoir un Nom + un ID/URL (temporaire avant OAuth).");
       return;
     }
 
     setSaving(true);
 
     try {
-      // 1) Insert client (⚠️ brief_avoid laissé au trigger SQL)
+      // 1) Insert client (brief_avoid géré par trigger SQL)
       const { data: client, error: cErr } = await supabase
         .from("clients")
         .insert({
@@ -250,13 +250,13 @@ export default function ClientsPage() {
         await uploadClientLogo({ agencyId, clientId, file: logoFile });
       }
 
-      // 3) Insert plateformes (optionnel)
+      // 3) Insert plateformes (optionnel, temporaire)
       if (platforms.length > 0) {
         const rows = platforms
           .filter((p) => p.platform && p.page_id.trim() && p.page_name.trim())
           .map((p) => ({
             client_id: clientId,
-            platform: p.platform, // ⚠️ doit matcher ton ENUM
+            platform: p.platform,
             page_name: p.page_name.trim(),
             page_id: p.page_id.trim(),
           }));
@@ -267,12 +267,8 @@ export default function ClientsPage() {
         }
       }
 
-      setOk("✅ Client créé avec succès (logo + réseaux enregistrés).");
-
-      // 4) Reload clients (pour voir brief_avoid mis à jour par trigger)
+      setOk("✅ Client créé avec succès.");
       await loadContextAndClients();
-
-      // 5) Reset form
       resetForm();
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
@@ -287,7 +283,7 @@ export default function ClientsPage() {
         <div>
           <h1 style={{ margin: 0 }}>Clients</h1>
           <p style={{ margin: "6px 0 0", color: "#64748b" }}>
-            Création client: Nom + Téléphone (indicatif) + Logo (optionnel) + Réseaux sociaux
+            Création client: Nom + Téléphone (tous pays) + Logo (optionnel) + Réseaux
           </p>
         </div>
         <button
@@ -336,7 +332,7 @@ export default function ClientsPage() {
             {avoidPreview ? avoidPreview : "Aucun autre client pour le moment."}
           </div>
           <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>
-            ⚙️ Géré automatiquement par le trigger SQL (sync après création/rename/suppression).
+            ⚙️ Géré automatiquement par le trigger SQL.
           </div>
         </div>
 
@@ -352,20 +348,24 @@ export default function ClientsPage() {
           </div>
 
           <div>
-            <label style={{ fontSize: 13, color: "#0f172a" }}>Téléphone (indicatif + numéro) *</label>
-            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 10 }}>
-              <select value={dialCode} onChange={(e) => setDialCode(e.target.value)} style={inputStyle}>
-                <option value="+216">+216 (TN)</option>
-                <option value="+33">+33 (FR)</option>
-                <option value="+971">+971 (UAE)</option>
-                <option value="+1">+1 (US)</option>
-                <option value="+39">+39 (IT)</option>
-              </select>
-              <input
-                value={phoneLocal}
-                onChange={(e) => setPhoneLocal(e.target.value)}
-                placeholder="Ex: 12345678"
-                style={inputStyle}
+            <label style={{ fontSize: 13, color: "#0f172a" }}>Téléphone (tous pays) *</label>
+            <div style={{ marginTop: 8 }}>
+              <PhoneInput
+                defaultCountry="tn"
+                value={phoneE164}
+                onChange={(val) => setPhoneE164(val)}
+                inputStyle={{
+                  width: "100%",
+                  borderRadius: 12,
+                  border: "1px solid #e2e8f0",
+                  padding: "10px 12px",
+                }}
+                countrySelectorStyleProps={{
+                  buttonStyle: {
+                    borderRadius: 12,
+                    border: "1px solid #e2e8f0",
+                  },
+                }}
               />
             </div>
             <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
@@ -396,17 +396,17 @@ export default function ClientsPage() {
             )}
           </div>
           <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
-            Bucket attendu: <b>client-logos</b> (public). Si tu as un autre nom, change-le dans le code.
+            Bucket: <b>client-logos</b> (public).
           </div>
         </div>
 
-        {/* Platforms */}
+        {/* Platforms (temporaire) */}
         <div style={{ marginTop: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontWeight: 700 }}>Réseaux sociaux (optionnel)</div>
+              <div style={{ fontWeight: 700 }}>Réseaux sociaux (temporaire)</div>
               <div style={{ color: "#64748b", fontSize: 12 }}>
-                Ajoute les pages/comptes manuellement maintenant (OAuth après).
+                Pour l’instant manuel. Après, on fait “Connecter Meta” (OAuth).
               </div>
             </div>
 
@@ -448,14 +448,14 @@ export default function ClientsPage() {
                   <input
                     value={p.page_name}
                     onChange={(e) => updatePlatformRow(idx, { page_name: e.target.value })}
-                    placeholder="Nom de page/compte"
+                    placeholder="Nom page/compte"
                     style={inputStyle}
                   />
 
                   <input
                     value={p.page_id}
                     onChange={(e) => updatePlatformRow(idx, { page_id: e.target.value })}
-                    placeholder="ID ou URL (ex: page_id / handle / channel_id)"
+                    placeholder="ID/URL (temporaire)"
                     style={inputStyle}
                   />
 
@@ -529,17 +529,13 @@ export default function ClientsPage() {
 
                   <div>
                     <div style={{ fontWeight: 800 }}>{c.name}</div>
-                    <div style={{ color: "#64748b", fontSize: 13 }}>
-                      {c.phone || "—"}
-                    </div>
+                    <div style={{ color: "#64748b", fontSize: 13 }}>{c.phone || "—"}</div>
                   </div>
                 </div>
 
                 <div style={{ maxWidth: 520, textAlign: "right" }}>
                   <div style={{ color: "#94a3b8", fontSize: 12 }}>Texte à éviter (auto)</div>
-                  <div style={{ color: "#475569", fontSize: 13 }}>
-                    {c.brief_avoid ? c.brief_avoid : "—"}
-                  </div>
+                  <div style={{ color: "#475569", fontSize: 13 }}>{c.brief_avoid ? c.brief_avoid : "—"}</div>
                 </div>
               </div>
             ))}
