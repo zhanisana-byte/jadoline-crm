@@ -5,10 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 
 /**
  * src/app/profile/page.tsx
- * - Clé agence = agency_keys.key (pas id)
- * - Archiver une agence (soft delete) via agencies.archived_at
- * - Filtre les agences archivées (archived_at IS NULL)
- * - UI: bouton Archiver sur agences OWNER (sauf active)
+ * ✅ SUPPRIMÉ: Générer / Régénérer une clé
+ * ✅ Clé agence = agency_keys.key (pas id)
+ * ✅ active -> is_active
+ * ✅ Archiver une agence (soft delete) via agencies.archived_at
+ * ✅ Filtre les agences archivées (archived_at IS NULL)
  */
 
 type TabKey = "INFO" | "MY_AGENCIES" | "WORK";
@@ -33,14 +34,14 @@ type MembershipRow = {
   agency_id: string;
   user_id: string;
   role: "OWNER" | "CM" | "MEMBER" | string;
-  status: "ACTIVE" | "INVITED" | string;
+  status: "ACTIVE" | "INVITED" | "SUSPENDED" | "DISABLED" | string;
 };
 
 type AgencyKeyRow = {
   id: string;
   agency_id: string;
   key: string; // ✅ vraie clé à copier/afficher
-  active: boolean;
+  is_active: boolean;
   created_at?: string;
 };
 
@@ -334,19 +335,19 @@ export default function ProfilePage() {
       setError(null);
 
       try {
-        // KEY: get active key
+        // KEY: get active key (is_active)
         const { data: keys, error: kErr } = await supabase
           .from("agency_keys")
-          .select("id, agency_id, key, active, created_at")
+          .select("id, agency_id, key, is_active, created_at")
           .eq("agency_id", selectedAgencyId)
-          .eq("active", true)
+          .eq("is_active", true)
           .limit(1);
 
         if (kErr) throw kErr;
         if (!alive) return;
         setAgencyKey((keys?.[0] as AgencyKeyRow) ?? null);
 
-        // MEMBERS: 2 queries
+        // MEMBERS
         const { data: mems, error: memErr } = await supabase
           .from("agency_members")
           .select("id, agency_id, user_id, role, status")
@@ -407,35 +408,6 @@ export default function ProfilePage() {
     }
   }
 
-  async function onGenerateKey() {
-    if (!selectedAgencyId) return;
-    setBusy(true);
-    setError(null);
-
-    try {
-      const { data, error: rpcErr } = await supabase.rpc("generate_agency_key", {
-        p_agency_id: selectedAgencyId,
-      });
-
-      if (rpcErr) throw rpcErr;
-
-      const code = String(data);
-
-      // update UI immediately (et on garde un id "temp")
-      setAgencyKey({
-        id: "temp",
-        agency_id: selectedAgencyId,
-        key: code,
-        active: true,
-        created_at: new Date().toISOString(),
-      });
-    } catch (e: any) {
-      setError(e?.message ?? "Erreur");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function archiveAgency(agencyId: string) {
     const ok = confirm(
       "Archiver cette agence ? Elle disparaîtra de la liste (restaurable)."
@@ -453,7 +425,6 @@ export default function ProfilePage() {
 
       if (aErr) throw aErr;
 
-      // refresh simple (safe)
       window.location.reload();
     } catch (e: any) {
       setError(e?.message ?? "Erreur");
@@ -477,10 +448,11 @@ export default function ProfilePage() {
     );
   }
 
-  const isOwnerOfSelected = !!(
+  const isOwnerOfSelected =
     memberships.find((m) => m.user_id === userId && m.agency_id === selectedAgencyId)
-      ?.role === "OWNER"
-  );
+      ?.role === "OWNER";
+
+  const isOwnerBool = !!isOwnerOfSelected;
 
   return (
     <div className="p-6 md:p-8 space-y-4">
@@ -525,9 +497,7 @@ export default function ProfilePage() {
             >
               <div className="flex flex-wrap gap-3">
                 {myAgencies.length === 0 ? (
-                  <p className="text-sm text-slate-500">
-                    Aucune agence en OWNER.
-                  </p>
+                  <p className="text-sm text-slate-500">Aucune agence en OWNER.</p>
                 ) : (
                   myAgencies.map((a) => {
                     const active = a.id === selectedAgencyId;
@@ -550,11 +520,8 @@ export default function ProfilePage() {
                           </div>
                           <Badge tone="muted">OWNER</Badge>
                         </div>
-                        <div className="mt-2 text-sm opacity-90">
-                          Statut : ACTIVE
-                        </div>
+                        <div className="mt-2 text-sm opacity-90">Statut : ACTIVE</div>
 
-                        {/* ✅ Archiver (sauf active) */}
                         {!active ? (
                           <div className="mt-3">
                             <button
@@ -586,44 +553,27 @@ export default function ProfilePage() {
                       </p>
                     </div>
 
-                    {/* KEY actions only if owner */}
-                    {isOwnerOfSelected ? (
-                      <div className="flex items-center gap-2">
-                        {agencyKey?.key ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(agencyKey.key)}
-                              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
-                            >
-                              Copier la clé
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={onGenerateKey}
-                              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                            >
-                              {busy ? "..." : "Régénérer"}
-                            </button>
-                          </>
-                        ) : (
+                    {/* ✅ KEY actions: seulement copier (pas générer) */}
+                    {isOwnerBool ? (
+                      agencyKey?.key ? (
+                        <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            disabled={busy}
-                            onClick={onGenerateKey}
-                            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                            onClick={() => copyToClipboard(agencyKey.key)}
+                            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
                           >
-                            {busy ? "..." : "Générer une clé"}
+                            Copier la clé
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <Badge tone="muted">Aucune clé active</Badge>
+                      )
                     ) : (
                       <Badge tone="muted">Clé réservée au OWNER</Badge>
                     )}
                   </div>
 
-                  {isOwnerOfSelected ? (
+                  {isOwnerBool ? (
                     agencyKey?.key ? (
                       <div className="mt-3 text-sm text-slate-700">
                         <span className="font-medium">Clé :</span>{" "}
@@ -684,7 +634,7 @@ export default function ProfilePage() {
                         type="button"
                         disabled
                         className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed"
-                        title="À venir : invitations email"
+                        title="À venir : invitations"
                       >
                         Inviter un membre (bientôt)
                       </button>
@@ -765,8 +715,7 @@ export default function ProfilePage() {
                   </span>
                 </div>
 
-                {/* ✅ On cache l'ID (moins d'infos) */}
-                {isOwnerOfSelected && agencyKey?.key ? (
+                {isOwnerBool && agencyKey?.key ? (
                   <div className="text-sm">
                     <span className="text-slate-500">Clé :</span>{" "}
                     <code className="rounded bg-slate-50 border px-2 py-1">
@@ -774,9 +723,7 @@ export default function ProfilePage() {
                     </code>
                   </div>
                 ) : (
-                  <div className="text-xs text-slate-500">
-                    (ID caché)
-                  </div>
+                  <div className="text-xs text-slate-500">(ID caché)</div>
                 )}
               </div>
             ) : (
