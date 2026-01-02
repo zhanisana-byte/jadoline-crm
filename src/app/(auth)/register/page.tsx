@@ -9,7 +9,7 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [joinCode, setJoinCode] = useState(""); // optionnel (rejoindre)
+  const [joinCode, setJoinCode] = useState(""); // optionnel
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -24,25 +24,40 @@ export default function RegisterPage() {
     setMsg(null);
 
     try {
-      // 1) signup (✅ force redirect vers votre domaine, pas localhost)
+      // 1) SIGN UP — FORCER LA REDIRECTION EMAIL VERS /callback
       const { error: signErr } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
           data: { full_name: fullName.trim() },
-          emailRedirectTo: "https://www.jadoline.com/auth/callback",
+          emailRedirectTo: "https://www.jadoline.com/callback",
         },
       });
-      if (signErr) throw signErr;
 
-      // 2) session check (si email confirmation ON => pas de session)
+      if (signErr) {
+        // Email déjà existant
+        if (
+          signErr.message.includes("already registered") ||
+          signErr.message.includes("User already registered")
+        ) {
+          setMsg(
+            "Un compte existe déjà avec cet email. Veuillez vous connecter ou renvoyer l’email de confirmation."
+          );
+          return;
+        }
+        throw signErr;
+      }
+
+      // 2) Si confirmation email activée → pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
-        setMsg("Compte créé ✅ Veuillez vérifier votre email, puis vous reconnecter.");
+        setMsg(
+          "Compte créé avec succès ✅ Veuillez vérifier votre email pour confirmer votre compte."
+        );
         return;
       }
 
-      // 3) si clé => join_with_code
+      // 3) Rejoindre via clé
       if (hasCode) {
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
           p_code: joinCode.trim(),
@@ -57,7 +72,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // 4) sinon => créer agence par défaut (nom auto)
+      // 4) Créer une agence par défaut
       const defaultAgencyName = `Agence de ${fullName.trim() || "Nouveau compte"}`;
 
       const { error: createErr } = await supabase.rpc("create_default_agency", {
@@ -65,8 +80,9 @@ export default function RegisterPage() {
       });
 
       if (createErr) {
-        // Fallback message: le compte est créé mais l'agence auto a échoué
-        setMsg("Compte créé ✅ (Agence non initialisée). Veuillez contacter l’administrateur.");
+        setMsg(
+          "Compte créé ✅ mais l’espace n’a pas pu être initialisé. Veuillez contacter l’administrateur."
+        );
         return;
       }
 
@@ -102,12 +118,11 @@ export default function RegisterPage() {
                 autoComplete="off"
               />
               <p className="helper">
-                Si vous disposez d’une clé, collez-la ici. Sinon, laissez ce champ vide pour créer
-                votre espace.
+                Si vous avez une clé, collez-la ici. Sinon, laissez vide pour créer votre espace.
               </p>
             </div>
 
-            <div className="divider">Infos</div>
+            <div className="divider">Informations</div>
 
             <div className="field">
               <label>Nom complet</label>
@@ -144,7 +159,11 @@ export default function RegisterPage() {
             </div>
 
             <button className="btn-primary w-full" disabled={loading}>
-              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer votre compte"}
+              {loading
+                ? "Création..."
+                : hasCode
+                ? "Rejoindre avec la clé"
+                : "Créer votre compte"}
             </button>
           </form>
 
