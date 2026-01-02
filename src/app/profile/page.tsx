@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 /**
  * src/app/profile/page.tsx
- * ✅ SUPPRIMÉ: Générer / Régénérer une clé
- * ✅ Clé agence = agency_keys.key (pas id)
- * ✅ active -> is_active
- * ✅ Archiver une agence (soft delete) via agencies.archived_at
- * ✅ Filtre les agences archivées (archived_at IS NULL)
+ * - Affiche la clé dans l'onglet Infos (plus pratique)
+ * - Supprime le module "Générer une clé" dans Mes agences
+ * - Clé active = agency_keys.is_active = true
  */
 
 type TabKey = "INFO" | "MY_AGENCIES" | "WORK";
@@ -17,7 +15,7 @@ type TabKey = "INFO" | "MY_AGENCIES" | "WORK";
 type ProfileRow = {
   user_id: string;
   full_name: string | null;
-  role: string | null; // global role (OWNER/CM/FITNESS...)
+  role: string | null;
   avatar_url: string | null;
   created_at?: string;
 };
@@ -25,7 +23,7 @@ type ProfileRow = {
 type AgencyRow = {
   id: string;
   name: string;
-  owner_id: string;
+  owner_id: string | null;
   archived_at?: string | null;
 };
 
@@ -40,7 +38,7 @@ type MembershipRow = {
 type AgencyKeyRow = {
   id: string;
   agency_id: string;
-  key: string; // ✅ vraie clé à copier/afficher
+  key: string;
   is_active: boolean;
   created_at?: string;
 };
@@ -138,8 +136,26 @@ function ProfileInfoCard(props: {
   emailConfirmed: boolean;
   busy: boolean;
   onSaveName: (newName: string) => Promise<void>;
+  // ✅ clé de l'espace actif
+  agencyName: string | null;
+  agencyKey: AgencyKeyRow | null;
+  canSeeKey: boolean;
+  onGenerateKey: () => Promise<void>;
+  onCopyKey: (text: string) => void;
 }) {
-  const { profile, email, emailConfirmed, busy, onSaveName } = props;
+  const {
+    profile,
+    email,
+    emailConfirmed,
+    busy,
+    onSaveName,
+    agencyName,
+    agencyKey,
+    canSeeKey,
+    onGenerateKey,
+    onCopyKey,
+  } = props;
+
   const [name, setName] = useState(profile.full_name ?? "");
 
   useEffect(() => {
@@ -160,10 +176,9 @@ function ProfileInfoCard(props: {
       }
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Nom */}
         <div>
-          <label className="text-sm font-medium text-slate-700">
-            Nom complet
-          </label>
+          <label className="text-sm font-medium text-slate-700">Nom complet</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -182,6 +197,7 @@ function ProfileInfoCard(props: {
           </div>
         </div>
 
+        {/* Email */}
         <div>
           <label className="text-sm font-medium text-slate-700">Email</label>
           <input
@@ -196,6 +212,60 @@ function ProfileInfoCard(props: {
           </p>
         </div>
       </div>
+
+      {/* ✅ Clé de l'espace actif */}
+      <div className="mt-5 rounded-2xl border border-slate-200 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs text-slate-500">Espace actif</p>
+            <p className="text-base font-semibold text-slate-900">
+              {agencyName ?? "Aucun espace sélectionné"}
+            </p>
+          </div>
+
+          {canSeeKey ? (
+            agencyKey?.key ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onCopyKey(agencyKey.key)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
+                >
+                  Copier la clé
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onGenerateKey}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {busy ? "..." : "Générer une clé"}
+              </button>
+            )
+          ) : (
+            <Badge tone="muted">Clé réservée au OWNER</Badge>
+          )}
+        </div>
+
+        {canSeeKey ? (
+          agencyKey?.key ? (
+            <div className="mt-3 text-sm text-slate-700">
+              <span className="font-medium">Clé :</span>{" "}
+              <code className="rounded-lg bg-slate-50 px-2 py-1 border border-slate-200">
+                {agencyKey.key}
+              </code>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">Aucune clé active pour le moment.</p>
+          )
+        ) : null}
+
+        <p className="mt-2 text-xs text-slate-500">
+          Cette clé sert à rejoindre cet espace (agence) depuis la page d’inscription.
+        </p>
+      </div>
     </Card>
   );
 }
@@ -204,7 +274,7 @@ function ProfileInfoCard(props: {
 export default function ProfilePage() {
   const supabase = createClient();
 
-  const [tab, setTab] = useState<TabKey>("MY_AGENCIES");
+  const [tab, setTab] = useState<TabKey>("INFO");
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -240,7 +310,7 @@ export default function ProfilePage() {
     const myMemberships = memberships.filter((m) => m.user_id === userId);
     const workIds = new Set(
       myMemberships
-        .filter((m) => m.role !== "OWNER") // CM/MEMBER
+        .filter((m) => m.role !== "OWNER")
         .map((m) => m.agency_id)
     );
     return agencies.filter((a) => workIds.has(a.id));
@@ -305,7 +375,6 @@ export default function ProfilePage() {
         setMemberships((mems ?? []) as MembershipRow[]);
         setAgencies(ags);
 
-        // default selected agency
         const defaultAgencyId = ags?.[0]?.id ?? null;
         setSelectedAgencyId((prev) => prev ?? defaultAgencyId);
       } catch (e: any) {
@@ -356,8 +425,8 @@ export default function ProfilePage() {
         if (memErr) throw memErr;
 
         const userIds = Array.from(new Set((mems ?? []).map((m) => m.user_id)));
-
         const profilesMap = new Map<string, ProfileRow>();
+
         if (userIds.length > 0) {
           const { data: profs, error: profErr } = await supabase
             .from("users_profile")
@@ -408,6 +477,36 @@ export default function ProfilePage() {
     }
   }
 
+  async function onGenerateKey() {
+    if (!selectedAgencyId) return;
+    setBusy(true);
+    setError(null);
+
+    try {
+      // RPC existante chez toi (si tu l'as) :
+      const { data, error: rpcErr } = await supabase.rpc("generate_agency_key", {
+        p_agency_id: selectedAgencyId,
+      });
+
+      if (rpcErr) throw rpcErr;
+
+      const code = String(data);
+
+      // UI update
+      setAgencyKey({
+        id: "temp",
+        agency_id: selectedAgencyId,
+        key: code,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function archiveAgency(agencyId: string) {
     const ok = confirm(
       "Archiver cette agence ? Elle disparaîtra de la liste (restaurable)."
@@ -424,7 +523,6 @@ export default function ProfilePage() {
         .eq("id", agencyId);
 
       if (aErr) throw aErr;
-
       window.location.reload();
     } catch (e: any) {
       setError(e?.message ?? "Erreur");
@@ -452,16 +550,14 @@ export default function ProfilePage() {
     memberships.find((m) => m.user_id === userId && m.agency_id === selectedAgencyId)
       ?.role === "OWNER";
 
-  const isOwnerBool = !!isOwnerOfSelected;
+  const canSeeKey = !!isOwnerOfSelected;
 
   return (
     <div className="p-6 md:p-8 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Profil</h1>
-          <p className="text-sm text-slate-500">
-            Gestion du compte & espaces de travail.
-          </p>
+          <p className="text-sm text-slate-500">Gestion du compte & espaces de travail.</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -487,6 +583,11 @@ export default function ProfilePage() {
               emailConfirmed={emailConfirmed}
               busy={busy}
               onSaveName={onSaveName}
+              agencyName={selectedAgency?.name ?? null}
+              agencyKey={agencyKey}
+              canSeeKey={canSeeKey}
+              onGenerateKey={onGenerateKey}
+              onCopyKey={copyToClipboard}
             />
           )}
 
@@ -501,7 +602,6 @@ export default function ProfilePage() {
                 ) : (
                   myAgencies.map((a) => {
                     const active = a.id === selectedAgencyId;
-
                     return (
                       <button
                         key={a.id}
@@ -515,9 +615,7 @@ export default function ProfilePage() {
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-base font-semibold truncate">
-                            {a.name}
-                          </div>
+                          <div className="text-base font-semibold truncate">{a.name}</div>
                           <Badge tone="muted">OWNER</Badge>
                         </div>
                         <div className="mt-2 text-sm opacity-90">Statut : ACTIVE</div>
@@ -545,100 +643,49 @@ export default function ProfilePage() {
 
               {selectedAgency ? (
                 <div className="mt-5 rounded-2xl border border-slate-200 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-slate-500">Espace sélectionné</p>
-                      <p className="text-lg font-semibold text-slate-900">
-                        {selectedAgency.name}
-                      </p>
-                    </div>
+                  <h4 className="text-sm font-semibold text-slate-900">
+                    Membres ({members.length})
+                  </h4>
 
-                    {/* ✅ KEY actions: seulement copier (pas générer) */}
-                    {isOwnerBool ? (
-                      agencyKey?.key ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(agencyKey.key)}
-                            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
-                          >
-                            Copier la clé
-                          </button>
-                        </div>
-                      ) : (
-                        <Badge tone="muted">Aucune clé active</Badge>
-                      )
+                  <div className="mt-3 space-y-2">
+                    {members.length === 0 ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                        Aucun membre.
+                      </div>
                     ) : (
-                      <Badge tone="muted">Clé réservée au OWNER</Badge>
+                      members.map((m) => (
+                        <div
+                          key={m.membership.id}
+                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-slate-900 truncate">
+                              {m.profile?.full_name ?? "Utilisateur"}
+                            </div>
+                            <div className="text-xs text-slate-500">{m.membership.user_id}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge tone="muted">{m.membership.role}</Badge>
+                            <Badge
+                              tone={m.membership.status === "ACTIVE" ? "success" : "info"}
+                            >
+                              {m.membership.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
 
-                  {isOwnerBool ? (
-                    agencyKey?.key ? (
-                      <div className="mt-3 text-sm text-slate-700">
-                        <span className="font-medium">Clé :</span>{" "}
-                        <code className="rounded-lg bg-slate-50 px-2 py-1 border border-slate-200">
-                          {agencyKey.key}
-                        </code>
-                      </div>
-                    ) : (
-                      <p className="mt-3 text-sm text-slate-500">
-                        Aucune clé active pour le moment.
-                      </p>
-                    )
-                  ) : null}
-
-                  <div className="mt-5">
-                    <h4 className="text-sm font-semibold text-slate-900">
-                      Membres ({members.length})
-                    </h4>
-
-                    <div className="mt-3 space-y-2">
-                      {members.length === 0 ? (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                          Aucun membre.
-                        </div>
-                      ) : (
-                        members.map((m) => (
-                          <div
-                            key={m.membership.id}
-                            className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-slate-900 truncate">
-                                {m.profile?.full_name ?? "Utilisateur"}
-                              </div>
-                              <div className="text-xs text-slate-500">
-                                {m.membership.user_id}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge tone="muted">{m.membership.role}</Badge>
-                              <Badge
-                                tone={
-                                  m.membership.status === "ACTIVE"
-                                    ? "success"
-                                    : "info"
-                                }
-                              >
-                                {m.membership.status}
-                              </Badge>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    <div className="mt-4">
-                      <button
-                        type="button"
-                        disabled
-                        className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed"
-                        title="À venir : invitations"
-                      >
-                        Inviter un membre (bientôt)
-                      </button>
-                    </div>
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      disabled
+                      className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed"
+                      title="À venir : invitations email"
+                    >
+                      Inviter un membre (bientôt)
+                    </button>
                   </div>
                 </div>
               ) : null}
@@ -646,15 +693,10 @@ export default function ProfilePage() {
           )}
 
           {tab === "WORK" && (
-            <Card
-              title="Work"
-              subtitle="Agences où vous collaborez (CM / MEMBER)."
-            >
+            <Card title="Work" subtitle="Agences où vous collaborez (CM / MEMBER).">
               <div className="flex flex-wrap gap-3">
                 {workAgencies.length === 0 ? (
-                  <p className="text-sm text-slate-500">
-                    Aucune collaboration pour le moment.
-                  </p>
+                  <p className="text-sm text-slate-500">Aucune collaboration pour le moment.</p>
                 ) : (
                   workAgencies.map((a) => {
                     const active = a.id === selectedAgencyId;
@@ -675,21 +717,17 @@ export default function ProfilePage() {
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-base font-semibold truncate">
-                            {a.name}
-                          </div>
+                          <div className="text-base font-semibold truncate">{a.name}</div>
                           <Badge tone="muted">{myMem?.role ?? "MEMBER"}</Badge>
                         </div>
-                        <div className="mt-2 text-sm opacity-90">
-                          Statut : {myMem?.status ?? "ACTIVE"}
-                        </div>
+                        <div className="mt-2 text-sm opacity-90">Statut : {myMem?.status ?? "ACTIVE"}</div>
                       </button>
                     );
                   })
                 )}
               </div>
               <p className="mt-4 text-xs text-slate-500">
-                (La clé d'agence n'est visible que pour les OWNER.)
+                (La clé d'agence est affichée dans “Infos” pour les OWNER.)
               </p>
             </Card>
           )}
@@ -710,17 +748,13 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <div className="text-sm">
                   <span className="text-slate-500">Agence :</span>{" "}
-                  <span className="font-semibold text-slate-900">
-                    {selectedAgency.name}
-                  </span>
+                  <span className="font-semibold text-slate-900">{selectedAgency.name}</span>
                 </div>
 
-                {isOwnerBool && agencyKey?.key ? (
+                {canSeeKey && agencyKey?.key ? (
                   <div className="text-sm">
                     <span className="text-slate-500">Clé :</span>{" "}
-                    <code className="rounded bg-slate-50 border px-2 py-1">
-                      {agencyKey.key}
-                    </code>
+                    <code className="rounded bg-slate-50 border px-2 py-1">{agencyKey.key}</code>
                   </div>
                 ) : (
                   <div className="text-xs text-slate-500">(ID caché)</div>
