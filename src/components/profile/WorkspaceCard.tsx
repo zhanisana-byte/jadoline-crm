@@ -29,7 +29,7 @@ export default function WorkspaceCard(props: {
   onGenerateKey: () => Promise<void>;
   onCopy: (txt: string) => Promise<void>;
 
-  onArchiveAgency: (agencyId: string) => Promise<void>; // ✅ AJOUT
+  onArchiveAgency: (agencyId: string) => Promise<void>;
 
   busy: boolean;
 }) {
@@ -117,7 +117,10 @@ export default function WorkspaceCard(props: {
                             onArchiveAgency(m.agency_id);
                           }}
                           disabled={busy}
-                          className="text-[11px] px-2 py-1 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                          className={cn(
+                            "text-[11px] px-2 py-1 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
+                            busy && "opacity-60 cursor-not-allowed"
+                          )}
                           title="Archiver cette agence"
                         >
                           🗑️
@@ -159,7 +162,7 @@ export default function WorkspaceCard(props: {
               {agencyKey?.key && (
                 <button
                   type="button"
-                  onClick={() => onCopy(agencyKey.key)} // ✅ key
+                  onClick={() => onCopy(agencyKey.key)}
                   disabled={busy}
                   className={cn(
                     "rounded-xl px-4 py-2 text-sm font-semibold border",
@@ -174,6 +177,29 @@ export default function WorkspaceCard(props: {
             </div>
           )}
         </div>
+
+        {/* Affichage de la clé (optionnel) */}
+        {isOwner && selectedAgencyId && agencyKey?.key ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs text-slate-500">Clé active</div>
+            <div className="flex items-center justify-between gap-3 mt-1">
+              <div className="font-mono text-sm">{agencyKey.key}</div>
+              <button
+                type="button"
+                onClick={() => onCopy(agencyKey.key)}
+                disabled={busy}
+                className={cn(
+                  "text-xs px-3 py-2 rounded-xl border",
+                  busy
+                    ? "border-slate-200 text-slate-400"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                )}
+              >
+                Copier
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Membres */}
         <div className="rounded-2xl border border-slate-200 overflow-hidden">
