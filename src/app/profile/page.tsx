@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 /* ================= TYPES ================= */
@@ -49,9 +49,7 @@ type AgencyKeyRow = {
 
 /* ================= HELPERS ================= */
 
-const firstAgency = (
-  a?: AgencyRow | AgencyRow[] | null
-): AgencyRow | null => {
+const firstAgency = (a?: AgencyRow | AgencyRow[] | null): AgencyRow | null => {
   if (!a) return null;
   return Array.isArray(a) ? a[0] ?? null : a;
 };
@@ -66,8 +64,16 @@ const safeDate = (iso: string) => {
 
 /* ================= UI ATOMS ================= */
 
-const Card = ({ children }: { children: React.ReactNode }) => (
-  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
+const Card = ({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => (
+  <div
+    className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
+  >
     {children}
   </div>
 );
@@ -76,49 +82,82 @@ const CardHeader = ({
   title,
   subtitle,
   right,
+  className = "",
 }: {
   title: string;
   subtitle?: string;
   right?: React.ReactNode;
+  className?: string;
 }) => (
-  <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-4">
+  <div
+    className={`p-5 border-b border-slate-100 flex items-start justify-between gap-4 ${className}`}
+  >
     <div>
-      <h2 className="text-lg font-semibold">{title}</h2>
-      {subtitle && (
-        <p className="text-sm text-slate-500 mt-1">{subtitle}</p>
-      )}
+      <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
     </div>
     {right}
   </div>
 );
 
-const CardBody = ({ children }: { children: React.ReactNode }) => (
-  <div className="p-5">{children}</div>
-);
+const CardBody = ({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => <div className={`p-5 ${className}`}>{children}</div>;
 
 const Btn = ({
   children,
   onClick,
   disabled,
   variant = "outline",
+  type = "button",
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
   variant?: "primary" | "outline";
+  type?: "button" | "submit";
 }) => {
+  const base =
+    "inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition disabled:opacity-60 disabled:cursor-not-allowed";
   const cls =
     variant === "primary"
       ? "bg-slate-900 text-white hover:bg-slate-800"
-      : "border border-slate-200 hover:bg-slate-50";
+      : "border border-slate-200 text-slate-800 hover:bg-slate-50";
   return (
     <button
+      type={type}
       disabled={disabled}
       onClick={onClick}
-      className={`px-4 py-2 rounded-xl text-sm ${cls}`}
+      className={`${base} ${cls}`}
     >
       {children}
     </button>
+  );
+};
+
+const Badge = ({
+  children,
+  tone = "gray",
+}: {
+  children: React.ReactNode;
+  tone?: "gray" | "green" | "amber" | "blue";
+}) => {
+  const cls =
+    tone === "green"
+      ? "bg-green-50 text-green-700 border-green-100"
+      : tone === "amber"
+      ? "bg-amber-50 text-amber-700 border-amber-100"
+      : tone === "blue"
+      ? "bg-blue-50 text-blue-700 border-blue-100"
+      : "bg-slate-50 text-slate-700 border-slate-100";
+  return (
+    <span className={`px-2.5 py-1 rounded-full text-xs border ${cls}`}>
+      {children}
+    </span>
   );
 };
 
@@ -136,6 +175,9 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [fullName, setFullName] = useState("");
   const [editName, setEditName] = useState(false);
+
+  const [email, setEmail] = useState("");
+  const [emailConfirmed, setEmailConfirmed] = useState(true);
 
   const [memberships, setMemberships] = useState<MembershipRow[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string | null>(null);
@@ -159,6 +201,7 @@ export default function ProfilePage() {
 
       const { data: auth } = await supabase.auth.getUser();
       const user = auth?.user;
+
       if (!user) {
         flash("Utilisateur non connecté");
         setLoading(false);
@@ -166,6 +209,8 @@ export default function ProfilePage() {
       }
 
       setAuthUserId(user.id);
+      setEmail(user.email ?? "");
+      setEmailConfirmed(!!(user.email_confirmed_at || (user as any).confirmed_at));
 
       const { data: p } = await supabase
         .from("users_profile")
@@ -200,20 +245,26 @@ export default function ProfilePage() {
     };
 
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  /* ============ LOAD SELECTED AGENCY DETAILS ============ */
+  /* ============ SELECTED AGENCY ============ */
 
   const selectedMembership =
     memberships.find((m) => m.agency_id === selectedAgencyId) || null;
 
-  const selectedAgency =
-    firstAgency(selectedMembership?.agencies) || null;
+  const selectedAgency = firstAgency(selectedMembership?.agencies) || null;
 
   const isOwner = selectedMembership?.member_role === "OWNER";
 
+  /* ============ LOAD MEMBERS + KEY FOR SELECTED AGENCY ============ */
+
   useEffect(() => {
-    if (!selectedAgencyId) return;
+    if (!selectedAgencyId) {
+      setAgencyMembers([]);
+      setAgencyKey(null);
+      return;
+    }
 
     const loadAgency = async () => {
       const { data: members } = await supabase
@@ -221,11 +272,10 @@ export default function ProfilePage() {
         .select(
           "user_id, member_role, workspace_role, joined_at, users_profile(full_name, avatar_url)"
         )
-        .eq("agency_id", selectedAgencyId);
+        .eq("agency_id", selectedAgencyId)
+        .order("joined_at", { ascending: true });
 
-      setAgencyMembers(
-        (members || []) as unknown as MemberViewRow[]
-      );
+      setAgencyMembers((members || []) as unknown as MemberViewRow[]);
 
       if (isOwner) {
         const { data: key } = await supabase
@@ -238,10 +288,13 @@ export default function ProfilePage() {
           .maybeSingle();
 
         setAgencyKey((key as AgencyKeyRow) || null);
+      } else {
+        setAgencyKey(null);
       }
     };
 
     loadAgency();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgencyId, isOwner]);
 
   /* ============ ACTIONS ============ */
@@ -250,26 +303,36 @@ export default function ProfilePage() {
     if (!authUserId) return;
     setBusy(true);
 
-    await supabase
+    const { error } = await supabase
       .from("users_profile")
       .update({ full_name: fullName })
       .eq("user_id", authUserId);
 
-    setProfile((p) => (p ? { ...p, full_name: fullName } : p));
-    setEditName(false);
-    flash("Nom mis à jour");
+    if (error) flash("Erreur mise à jour");
+    else {
+      setProfile((p) => (p ? { ...p, full_name: fullName } : p));
+      setEditName(false);
+      flash("Nom mis à jour ✅");
+    }
+
     setBusy(false);
   };
 
   const createAgency = async () => {
-    if (!newAgencyName || !authUserId) return;
+    if (!newAgencyName.trim() || !authUserId) return;
     setBusy(true);
 
-    const { data } = await supabase.rpc("create_agency", {
-      p_name: newAgencyName,
+    const { data, error } = await supabase.rpc("create_agency", {
+      p_name: newAgencyName.trim(),
     });
 
-    flash("Agence créée");
+    if (error || !data) {
+      flash("Impossible de créer l’espace");
+      setBusy(false);
+      return;
+    }
+
+    flash("Espace créé ✅");
     setNewAgencyName("");
 
     const { data: ms } = await supabase
@@ -279,29 +342,26 @@ export default function ProfilePage() {
       )
       .eq("user_id", authUserId);
 
-    const list = (ms || []) as unknown as MembershipRow[];
-    setMemberships(list);
+    setMemberships((ms || []) as unknown as MembershipRow[]);
     setSelectedAgencyId(String(data));
-
     setBusy(false);
   };
 
   const joinAgency = async () => {
-    if (!joinCode || !authUserId) return;
+    if (!joinCode.trim() || !authUserId) return;
     setBusy(true);
 
-    const { data, error } = await supabase.rpc(
-      "join_agency_with_code",
-      { p_code: joinCode }
-    );
+    const { data, error } = await supabase.rpc("join_agency_with_code", {
+      p_code: joinCode.trim(),
+    });
 
-    if (error) {
-      flash("Clé invalide");
+    if (error || !data) {
+      flash("Clé invalide / accès refusé");
       setBusy(false);
       return;
     }
 
-    flash("Agence rejointe");
+    flash("Agence rejointe ✅");
     setJoinCode("");
 
     const { data: ms } = await supabase
@@ -311,104 +371,293 @@ export default function ProfilePage() {
       )
       .eq("user_id", authUserId);
 
-    const list = (ms || []) as unknown as MembershipRow[];
-    setMemberships(list);
+    setMemberships((ms || []) as unknown as MembershipRow[]);
     setSelectedAgencyId(String(data));
-
     setBusy(false);
   };
 
-  /* ============ RENDER ============ */
+  const copy = async (txt: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      flash("Copié ✅");
+    } catch {
+      flash("Copie impossible");
+    }
+  };
+
+  /* ================= RENDER ================= */
 
   if (loading) return <div className="p-6">Chargement…</div>;
   if (!profile) return <div className="p-6">Profil introuvable</div>;
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
-      <h1 className="text-3xl font-semibold">Profil</h1>
-      {toast && (
-        <div className="bg-slate-900 text-white px-4 py-2 rounded-xl">
-          {toast}
+    <div className="max-w-6xl mx-auto p-6">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold text-slate-900">Profil</h1>
+          <p className="text-slate-600 mt-1">
+            Gestion du compte & espaces de travail.
+          </p>
         </div>
-      )}
 
-      {/* INFO PERSO */}
-      <Card>
-        <CardHeader title="Informations personnelles" />
-        <CardBody>
-          <input
-            className="border px-3 py-2 rounded-xl w-full"
-            value={fullName}
-            disabled={!editName}
-            onChange={(e) => setFullName(e.target.value)}
-          />
-          <div className="mt-3 flex gap-2">
-            {!editName ? (
-              <Btn onClick={() => setEditName(true)}>Modifier</Btn>
-            ) : (
-              <>
-                <Btn variant="primary" onClick={saveName}>
-                  Enregistrer
-                </Btn>
-                <Btn onClick={() => setEditName(false)}>Annuler</Btn>
-              </>
-            )}
-          </div>
-        </CardBody>
-      </Card>
+        <div className="flex items-center gap-2">
+          <Badge tone={profile.role === "OWNER" ? "green" : "blue"}>
+            Rôle global : {profile.role}
+          </Badge>
+          {toast && (
+            <span className="text-sm px-3 py-2 rounded-xl bg-slate-900 text-white">
+              {toast}
+            </span>
+          )}
+        </div>
+      </div>
 
-      {/* ESPACES */}
-      <Card>
-        <CardHeader title="Espaces de travail" />
-        <CardBody>
-          {memberships.map((m) => {
-            const ag = firstAgency(m.agencies);
-            return (
-              <div
-                key={m.agency_id}
-                className={`p-3 rounded-xl border mb-2 cursor-pointer ${
-                  selectedAgencyId === m.agency_id
-                    ? "border-slate-900"
-                    : "border-slate-200"
-                }`}
-                onClick={() => setSelectedAgencyId(m.agency_id)}
-              >
-                <b>{ag?.name || "Agence"}</b> — {m.member_role}
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* LEFT */}
+        <div className="lg:col-span-8 space-y-6">
+          <Card>
+            <CardHeader
+              title="Informations personnelles"
+              subtitle="Nom modifiable, email en lecture seule."
+              right={
+                !editName ? (
+                  <Btn onClick={() => setEditName(true)}>Modifier</Btn>
+                ) : (
+                  <div className="flex gap-2">
+                    <Btn variant="primary" disabled={busy} onClick={saveName}>
+                      Enregistrer
+                    </Btn>
+                    <Btn
+                      disabled={busy}
+                      onClick={() => {
+                        setEditName(false);
+                        setFullName(profile.full_name ?? "");
+                      }}
+                    >
+                      Annuler
+                    </Btn>
+                  </div>
+                )
+              }
+            />
+            <CardBody>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-600">
+                    Nom complet
+                  </label>
+                  <input
+                    className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2"
+                    value={fullName}
+                    disabled={!editName}
+                    onChange={(e) => setFullName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-600">
+                    Email
+                  </label>
+                  <input
+                    className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    value={email}
+                    disabled
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-600">
+                    Créé le
+                  </label>
+                  <input
+                    className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    value={safeDate(profile.created_at)}
+                    disabled
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-600">
+                    Email confirmé
+                  </label>
+                  <div className="mt-2">
+                    <Badge tone={emailConfirmed ? "green" : "amber"}>
+                      {emailConfirmed ? "✅ Confirmé" : "❌ Non confirmé"}
+                    </Badge>
+                  </div>
+                </div>
               </div>
-            );
-          })}
-        </CardBody>
-      </Card>
+            </CardBody>
+          </Card>
 
-      {/* CREATE / JOIN */}
-      <Card>
-        <CardHeader title="Créer ou rejoindre une agence" />
-        <CardBody className="space-y-4">
-          <div className="flex gap-2">
-            <input
-              className="border px-3 py-2 rounded-xl flex-1"
-              placeholder="Nom agence"
-              value={newAgencyName}
-              onChange={(e) => setNewAgencyName(e.target.value)}
+          <Card>
+            <CardHeader
+              title="Espace de travail"
+              subtitle="Agences liées + sélection d’un espace."
             />
-            <Btn variant="primary" onClick={createAgency}>
-              Créer
-            </Btn>
-          </div>
+            <CardBody>
+              {memberships.length === 0 ? (
+                <div className="p-4 rounded-xl border border-amber-100 bg-amber-50 text-amber-800">
+                  Aucun espace lié. Crée un espace ou rejoins avec une clé.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {memberships.map((m) => {
+                    const ag = firstAgency(m.agencies);
+                    const active = selectedAgencyId === m.agency_id;
+                    return (
+                      <button
+                        key={m.agency_id}
+                        onClick={() => setSelectedAgencyId(m.agency_id)}
+                        className={`text-left p-4 rounded-2xl border transition ${
+                          active
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="font-semibold">
+                            {ag?.name || "Agence sans nom"}
+                          </div>
+                          <span
+                            className={`text-xs px-2 py-1 rounded-full border ${
+                              active
+                                ? "border-white/20 bg-white/10"
+                                : "border-slate-200 bg-slate-50"
+                            }`}
+                          >
+                            {m.member_role}
+                          </span>
+                        </div>
+                        <div
+                          className={`mt-2 text-sm ${
+                            active ? "text-white/80" : "text-slate-600"
+                          }`}
+                        >
+                          Accès : {m.workspace_role}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-          <div className="flex gap-2">
-            <input
-              className="border px-3 py-2 rounded-xl flex-1"
-              placeholder="Clé agence"
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value)}
-            />
-            <Btn variant="primary" onClick={joinAgency}>
-              Rejoindre
-            </Btn>
+              <div className="mt-6 border-t pt-5">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-slate-500">Espace sélectionné</div>
+                    <div className="text-xl font-semibold text-slate-900">
+                      {selectedAgency?.name || "—"}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {isOwner ? (
+                      agencyKey?.code ? (
+                        <>
+                          <Btn onClick={() => copy(agencyKey.code)}>Copier clé</Btn>
+                        </>
+                      ) : (
+                        <Badge tone="amber">Aucune clé active</Badge>
+                      )
+                    ) : (
+                      <Badge tone="amber">Clé réservée au OWNER</Badge>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="p-4 bg-slate-50 border-b border-slate-100 font-semibold">
+                    Membres ({agencyMembers.length})
+                  </div>
+                  {agencyMembers.length === 0 ? (
+                    <div className="p-4 text-slate-600">Aucun membre.</div>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {agencyMembers.map((m) => (
+                        <div
+                          key={m.user_id}
+                          className="p-4 flex items-center justify-between"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900 truncate">
+                              {m.users_profile?.full_name || m.user_id}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {safeDate(m.joined_at)}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Badge
+                              tone={m.member_role === "OWNER" ? "green" : "gray"}
+                            >
+                              {m.member_role}
+                            </Badge>
+                            <Badge tone="blue">{m.workspace_role}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Créer ou rejoindre une agence" />
+            <CardBody className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input
+                  className="md:col-span-2 w-full border border-slate-200 rounded-xl px-3 py-2"
+                  placeholder="Nom de l’agence (ex: Sana Agency)"
+                  value={newAgencyName}
+                  onChange={(e) => setNewAgencyName(e.target.value)}
+                />
+                <Btn
+                  variant="primary"
+                  disabled={busy || !newAgencyName.trim()}
+                  onClick={createAgency}
+                >
+                  Créer
+                </Btn>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input
+                  className="md:col-span-2 w-full border border-slate-200 rounded-xl px-3 py-2"
+                  placeholder="Clé d’agence"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                />
+                <Btn
+                  variant="primary"
+                  disabled={busy || !joinCode.trim()}
+                  onClick={joinAgency}
+                >
+                  Rejoindre
+                </Btn>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* RIGHT */}
+        <aside className="lg:col-span-4">
+          <div className="sticky top-6 space-y-6">
+            <Card>
+              <CardHeader title="Récap rapide" />
+              <CardBody>
+                <ul className="text-sm text-slate-700 space-y-2">
+                  <li>✅ Un utilisateur peut être dans plusieurs agences</li>
+                  <li>🔑 La clé appartient à l’agence</li>
+                  <li>👥 Un CM peut travailler sur plusieurs agences</li>
+                </ul>
+              </CardBody>
+            </Card>
           </div>
-        </CardBody>
-      </Card>
+        </aside>
+      </div>
     </div>
   );
 }
