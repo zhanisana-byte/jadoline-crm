@@ -10,7 +10,7 @@ export default function RegisterPage() {
 
   const [agencyName, setAgencyName] = useState("");
   const [fullName, setFullName] = useState("");
-  const [joinCode, setJoinCode] = useState(""); // ✅ nouveau
+  const [joinCode, setJoinCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -67,52 +67,94 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="container">
-      <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
-        <h1 style={{ marginTop: 0 }}>Créer un compte</h1>
+    <div className="auth-wrap">
+      <div className="auth-card">
+        <div className="card auth-card-inner">
+          <h1 className="auth-title">Créer un compte</h1>
+          <p className="auth-subtitle">
+            Rejoins une agence avec une clé, ou crée ton propre espace.
+          </p>
 
-        {msg && <p className="muted">{msg}</p>}
-
-        <form onSubmit={onSubmit}>
-          {/* ✅ Clé optionnelle */}
-          <label>Clé (optionnelle)</label>
-          <input
-            className="input"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-            placeholder="Clé agence ou clé Fitness"
-          />
-
-          {/* Nom d'agence seulement si pas de clé */}
-          {!hasCode && (
-            <>
-              <label style={{ marginTop: 12 }}>Nom de l’agence</label>
-              <input
-                className="input"
-                value={agencyName}
-                onChange={(e) => setAgencyName(e.target.value)}
-                placeholder="Ex: Sana Agency"
-              />
-            </>
+          {msg && (
+            <div className="alert alert-info">
+              {msg}
+            </div>
           )}
 
-          <label style={{ marginTop: 12 }}>Nom complet</label>
-          <input className="input" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+          <form className="auth-form" onSubmit={onSubmit}>
+            {/* Clé optionnelle */}
+            <div className="field">
+              <label>Clé (optionnelle)</label>
+              <input
+                className="input"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value)}
+                placeholder="Clé agence ou clé Fitness"
+                autoComplete="off"
+              />
+              <p className="helper">
+                Si tu as une clé, tu seras automatiquement rattaché(e) au bon espace.
+              </p>
+            </div>
 
-          <label style={{ marginTop: 12 }}>Email</label>
-          <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+            {/* Nom d'agence seulement si pas de clé */}
+            {!hasCode && (
+              <div className="field">
+                <label>Nom de l’agence</label>
+                <input
+                  className="input"
+                  value={agencyName}
+                  onChange={(e) => setAgencyName(e.target.value)}
+                  placeholder="Ex: Sana Agency"
+                />
+              </div>
+            )}
 
-          <label style={{ marginTop: 12 }}>Mot de passe</label>
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <div className="divider">Infos</div>
 
-          <button className="btn" style={{ marginTop: 16 }} disabled={loading}>
-            {loading ? "Création..." : "Créer mon compte"}
-          </button>
-        </form>
+            <div className="field">
+              <label>Nom complet</label>
+              <input
+                className="input"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Ex: Sana Zhani"
+              />
+            </div>
 
-        <p style={{ marginTop: 10 }}>
-          Déjà un compte ? <a href="/login">Connexion</a>
-        </p>
+            <div className="field">
+              <label>Email</label>
+              <input
+                className="input"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="email@exemple.com"
+                autoComplete="email"
+              />
+            </div>
+
+            <div className="field">
+              <label>Mot de passe</label>
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <p className="helper">8 caractères minimum recommandé.</p>
+            </div>
+
+            <button className="btn-primary w-full" disabled={loading}>
+              {loading ? "Création..." : "Créer mon compte"}
+            </button>
+          </form>
+
+          <p className="footer-link">
+            Déjà un compte ? <a href="/login">Connexion</a>
+          </p>
+        </div>
       </div>
     </div>
   );
