@@ -34,10 +34,6 @@ export default function JoinAgencyCard({
             Rejoindre
           </Btn>
         </div>
-
-        <div className="text-xs text-slate-500">
-          Cette action ne crée pas d’agence : elle rejoint un espace existant.
-        </div>
       </CardBody>
     </Card>
   );
