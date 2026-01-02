@@ -29,6 +29,8 @@ export default function WorkspaceCard(props: {
   onGenerateKey: () => Promise<void>;
   onCopy: (txt: string) => Promise<void>;
 
+  onArchiveAgency: (agencyId: string) => Promise<void>; // ✅ AJOUT
+
   busy: boolean;
 }) {
   const {
@@ -40,10 +42,12 @@ export default function WorkspaceCard(props: {
     agencyKey,
     onGenerateKey,
     onCopy,
+    onArchiveAgency,
     busy,
   } = props;
 
-  const selected = memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+  const selected =
+    memberships.find((m) => m.agency_id === selectedAgencyId) || null;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -64,6 +68,7 @@ export default function WorkspaceCard(props: {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {memberships.map((m) => {
               const active = m.agency_id === selectedAgencyId;
+
               return (
                 <button
                   key={m.id}
@@ -81,20 +86,44 @@ export default function WorkspaceCard(props: {
                       <div className="font-semibold text-base">
                         {getAgencyName(m.agencies)}
                       </div>
-                      <div className={cn("text-xs mt-1", active ? "text-slate-200" : "text-slate-500")}>
+                      <div
+                        className={cn(
+                          "text-xs mt-1",
+                          active ? "text-slate-200" : "text-slate-500"
+                        )}
+                      >
                         Statut : {m.status ?? "—"}
                       </div>
                     </div>
-                    <span
-                      className={cn(
-                        "text-[11px] px-2 py-1 rounded-full border",
-                        active
-                          ? "border-white/20 bg-white/10 text-white"
-                          : "border-slate-200 bg-slate-50 text-slate-700"
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "text-[11px] px-2 py-1 rounded-full border",
+                          active
+                            ? "border-white/20 bg-white/10 text-white"
+                            : "border-slate-200 bg-slate-50 text-slate-700"
+                        )}
+                      >
+                        {m.role}
+                      </span>
+
+                      {/* 🗑️ Archiver (OWNER seulement, pas l’actif) */}
+                      {isOwner && !active && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onArchiveAgency(m.agency_id);
+                          }}
+                          disabled={busy}
+                          className="text-[11px] px-2 py-1 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                          title="Archiver cette agence"
+                        >
+                          🗑️
+                        </button>
                       )}
-                    >
-                      {m.role}
-                    </span>
+                    </div>
                   </div>
                 </button>
               );
@@ -127,10 +156,10 @@ export default function WorkspaceCard(props: {
                 Générer une clé
               </button>
 
-              {agencyKey?.id && (
+              {agencyKey?.key && (
                 <button
                   type="button"
-                  onClick={() => onCopy(agencyKey.id)}
+                  onClick={() => onCopy(agencyKey.key)} // ✅ key
                   disabled={busy}
                   className={cn(
                     "rounded-xl px-4 py-2 text-sm font-semibold border",
@@ -139,7 +168,7 @@ export default function WorkspaceCard(props: {
                       : "border-slate-200 text-slate-700 hover:bg-slate-50"
                   )}
                 >
-                  Copier
+                  Copier la clé
                 </button>
               )}
             </div>
@@ -159,11 +188,16 @@ export default function WorkspaceCard(props: {
 
           {selectedAgencyId ? (
             members.length === 0 ? (
-              <div className="px-4 py-4 text-sm text-slate-500">Aucun membre.</div>
+              <div className="px-4 py-4 text-sm text-slate-500">
+                Aucun membre.
+              </div>
             ) : (
               <ul className="divide-y divide-slate-100">
                 {members.map((m) => (
-                  <li key={m.user_id} className="px-4 py-3 flex items-center justify-between">
+                  <li
+                    key={m.user_id}
+                    className="px-4 py-3 flex items-center justify-between"
+                  >
                     <div className="min-w-0">
                       <div className="font-medium truncate">
                         {m.users_profile?.full_name ?? "Sans nom"}
