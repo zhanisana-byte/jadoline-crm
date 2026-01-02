@@ -34,10 +34,6 @@ export default function CreateAgencyCard({
             Créer
           </Btn>
         </div>
-
-        <div className="text-xs text-slate-500">
-          Cette action est indépendante de “Rejoindre une agence”.
-        </div>
       </CardBody>
     </Card>
   );
