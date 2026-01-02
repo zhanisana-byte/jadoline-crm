@@ -18,17 +18,16 @@ export default function WorkspaceCard({
   memberships: MembershipRow[];
   selectedAgencyId: string | null;
   onSelectAgency: (agencyId: string) => void;
-
   members: MemberViewRow[];
   isOwner: boolean;
-
   agencyKey: AgencyKeyRow | null;
   onGenerateKey: () => Promise<void>;
   onCopy: (txt: string) => Promise<void>;
-
   busy: boolean;
 }) {
-  const selectedMembership = memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+  const selectedMembership =
+    memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+
   const selectedAgency = firstAgency(selectedMembership?.agencies);
 
   return (
@@ -59,7 +58,9 @@ export default function WorkspaceCard({
                     <div className="font-semibold">{ag?.name || "Agence sans nom"}</div>
                     <span
                       className={`text-xs px-2 py-1 rounded-full border ${
-                        active ? "border-white/20 bg-white/10" : "border-slate-200 bg-slate-50"
+                        active
+                          ? "border-white/20 bg-white/10"
+                          : "border-slate-200 bg-slate-50"
                       }`}
                     >
                       {m.role}
@@ -79,7 +80,9 @@ export default function WorkspaceCard({
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <div className="text-sm text-slate-500">Espace sélectionné</div>
-              <div className="text-xl font-semibold text-slate-900">{selectedAgency?.name || "—"}</div>
+              <div className="text-xl font-semibold text-slate-900">
+                {selectedAgency?.name || "—"}
+              </div>
             </div>
 
             <div className="flex gap-2 items-center">
@@ -87,7 +90,11 @@ export default function WorkspaceCard({
                 agencyKey?.id ? (
                   <Btn onClick={() => onCopy(agencyKey.id)}>Copier clé</Btn>
                 ) : (
-                  <Btn variant="primary" disabled={busy || !selectedAgencyId} onClick={onGenerateKey}>
+                  <Btn
+                    variant="primary"
+                    disabled={busy || !selectedAgencyId}
+                    onClick={onGenerateKey}
+                  >
                     Générer une clé
                   </Btn>
                 )
@@ -101,7 +108,9 @@ export default function WorkspaceCard({
             <div className="mt-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
               <div className="text-xs text-slate-500">Clé d’invitation</div>
               <div className="mt-1 font-mono text-sm break-all">{agencyKey.id}</div>
-              <div className="mt-2 text-xs text-slate-500">Créée le {safeDate(agencyKey.created_at)}</div>
+              <div className="mt-2 text-xs text-slate-500">
+                Créée le {safeDate(agencyKey.created_at)}
+              </div>
             </div>
           )}
 
