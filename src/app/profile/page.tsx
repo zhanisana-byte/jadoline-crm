@@ -5,10 +5,10 @@ import { createClient } from "@/lib/supabase/client";
 
 /**
  * src/app/profile/page.tsx
- * - Corrige l'erreur TypeScript: <ProfileInfoCard /> sans props
- * - Rend le profil safe: pas de rendu tant que profile n'est pas chargé
- * - Évite la jointure Supabase "schema cache relationship" en chargeant
- *   les profils des membres via 2 requêtes (agency_members puis users_profile)
+ * - Clé agence = agency_keys.key (pas id)
+ * - Archiver une agence (soft delete) via agencies.archived_at
+ * - Filtre les agences archivées (archived_at IS NULL)
+ * - UI: bouton Archiver sur agences OWNER (sauf active)
  */
 
 type TabKey = "INFO" | "MY_AGENCIES" | "WORK";
@@ -25,6 +25,7 @@ type AgencyRow = {
   id: string;
   name: string;
   owner_id: string;
+  archived_at?: string | null;
 };
 
 type MembershipRow = {
@@ -36,8 +37,9 @@ type MembershipRow = {
 };
 
 type AgencyKeyRow = {
-  id: string; // code
+  id: string;
   agency_id: string;
+  key: string; // ✅ vraie clé à copier/afficher
   active: boolean;
   created_at?: string;
 };
@@ -57,9 +59,12 @@ function Badge({
   const cls = useMemo(() => {
     const base =
       "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium border";
-    if (tone === "success") return `${base} bg-emerald-50 border-emerald-200 text-emerald-800`;
-    if (tone === "info") return `${base} bg-blue-50 border-blue-200 text-blue-800`;
-    if (tone === "muted") return `${base} bg-slate-50 border-slate-200 text-slate-700`;
+    if (tone === "success")
+      return `${base} bg-emerald-50 border-emerald-200 text-emerald-800`;
+    if (tone === "info")
+      return `${base} bg-blue-50 border-blue-200 text-blue-800`;
+    if (tone === "muted")
+      return `${base} bg-slate-50 border-slate-200 text-slate-700`;
     return `${base} bg-white border-slate-200 text-slate-800`;
   }, [tone]);
 
@@ -155,7 +160,9 @@ function ProfileInfoCard(props: {
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="text-sm font-medium text-slate-700">Nom complet</label>
+          <label className="text-sm font-medium text-slate-700">
+            Nom complet
+          </label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -247,13 +254,11 @@ export default function ProfilePage() {
       setError(null);
 
       try {
-        // auth user
         const { data: authData, error: authErr } = await supabase.auth.getUser();
         if (authErr) throw authErr;
 
         const user = authData.user;
         if (!user) throw new Error("Not authenticated");
-
         if (!alive) return;
 
         setUserId(user.id);
@@ -280,23 +285,27 @@ export default function ProfilePage() {
         const agencyIds = (mems ?? []).map((m) => m.agency_id);
         const uniqAgencyIds = Array.from(new Set(agencyIds));
 
-        // agencies
-        const { data: ags, error: agErr } = await supabase
-          .from("agencies")
-          .select("id, name, owner_id")
-          .in("id", uniqAgencyIds);
+        // agencies (filtrer archived)
+        let ags: AgencyRow[] = [];
+        if (uniqAgencyIds.length > 0) {
+          const { data: agsData, error: agErr } = await supabase
+            .from("agencies")
+            .select("id, name, owner_id, archived_at")
+            .in("id", uniqAgencyIds)
+            .is("archived_at", null);
 
-        if (agErr) throw agErr;
+          if (agErr) throw agErr;
+          ags = (agsData ?? []) as AgencyRow[];
+        }
 
         if (!alive) return;
 
         setProfile(p as ProfileRow);
         setMemberships((mems ?? []) as MembershipRow[]);
-        setAgencies((ags ?? []) as AgencyRow[]);
+        setAgencies(ags);
 
         // default selected agency
-        const defaultAgencyId =
-          uniqAgencyIds[0] ?? (ags?.[0]?.id ?? null) ?? null;
+        const defaultAgencyId = ags?.[0]?.id ?? null;
         setSelectedAgencyId((prev) => prev ?? defaultAgencyId);
       } catch (e: any) {
         if (!alive) return;
@@ -325,20 +334,19 @@ export default function ProfilePage() {
       setError(null);
 
       try {
-        // KEY: get active key if exists (optional)
+        // KEY: get active key
         const { data: keys, error: kErr } = await supabase
           .from("agency_keys")
-          .select("id, agency_id, active, created_at")
+          .select("id, agency_id, key, active, created_at")
           .eq("agency_id", selectedAgencyId)
           .eq("active", true)
           .limit(1);
 
         if (kErr) throw kErr;
-
         if (!alive) return;
         setAgencyKey((keys?.[0] as AgencyKeyRow) ?? null);
 
-        // MEMBERS: avoid join relationship issues => 2 queries
+        // MEMBERS: 2 queries
         const { data: mems, error: memErr } = await supabase
           .from("agency_members")
           .select("id, agency_id, user_id, role, status")
@@ -346,11 +354,9 @@ export default function ProfilePage() {
 
         if (memErr) throw memErr;
 
-        const userIds = Array.from(
-          new Set((mems ?? []).map((m) => m.user_id))
-        );
+        const userIds = Array.from(new Set((mems ?? []).map((m) => m.user_id)));
 
-        let profilesMap = new Map<string, ProfileRow>();
+        const profilesMap = new Map<string, ProfileRow>();
         if (userIds.length > 0) {
           const { data: profs, error: profErr } = await supabase
             .from("users_profile")
@@ -358,7 +364,6 @@ export default function ProfilePage() {
             .in("user_id", userIds);
 
           if (profErr) throw profErr;
-
           (profs ?? []).forEach((pr: any) => profilesMap.set(pr.user_id, pr));
         }
 
@@ -414,16 +419,42 @@ export default function ProfilePage() {
 
       if (rpcErr) throw rpcErr;
 
-      // data is uuid/code
       const code = String(data);
 
-      // refresh active key display
+      // update UI immediately (et on garde un id "temp")
       setAgencyKey({
-        id: code,
+        id: "temp",
         agency_id: selectedAgencyId,
+        key: code,
         active: true,
         created_at: new Date().toISOString(),
       });
+    } catch (e: any) {
+      setError(e?.message ?? "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archiveAgency(agencyId: string) {
+    const ok = confirm(
+      "Archiver cette agence ? Elle disparaîtra de la liste (restaurable)."
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const { error: aErr } = await supabase
+        .from("agencies")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", agencyId);
+
+      if (aErr) throw aErr;
+
+      // refresh simple (safe)
+      window.location.reload();
     } catch (e: any) {
       setError(e?.message ?? "Erreur");
     } finally {
@@ -445,6 +476,11 @@ export default function ProfilePage() {
       </div>
     );
   }
+
+  const isOwnerOfSelected = !!(
+    memberships.find((m) => m.user_id === userId && m.agency_id === selectedAgencyId)
+      ?.role === "OWNER"
+  );
 
   return (
     <div className="p-6 md:p-8 space-y-4">
@@ -472,7 +508,6 @@ export default function ProfilePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* left / main */}
         <div className="lg:col-span-2 space-y-4">
-          {/* ✅ FIX: pass required props */}
           {tab === "INFO" && (
             <ProfileInfoCard
               profile={profile}
@@ -484,53 +519,81 @@ export default function ProfilePage() {
           )}
 
           {tab === "MY_AGENCIES" && (
-            <>
-              <Card title="Espace de travail" subtitle="Agences liées + sélection d'un espace.">
-                <div className="flex flex-wrap gap-3">
-                  {myAgencies.length === 0 ? (
-                    <p className="text-sm text-slate-500">Aucune agence en OWNER.</p>
-                  ) : (
-                    myAgencies.map((a) => {
-                      const active = a.id === selectedAgencyId;
-                      return (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() => setSelectedAgencyId(a.id)}
-                          className={[
-                            "w-full sm:w-[260px] rounded-2xl border p-4 text-left transition",
-                            active
-                              ? "bg-slate-900 text-white border-slate-900"
-                              : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50",
-                          ].join(" ")}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="text-base font-semibold truncate">{a.name}</div>
-                            <Badge tone={active ? "muted" : "muted"}>OWNER</Badge>
+            <Card
+              title="Mes agences (OWNER)"
+              subtitle="Sélectionne un espace. Tu peux archiver les agences inutiles."
+            >
+              <div className="flex flex-wrap gap-3">
+                {myAgencies.length === 0 ? (
+                  <p className="text-sm text-slate-500">
+                    Aucune agence en OWNER.
+                  </p>
+                ) : (
+                  myAgencies.map((a) => {
+                    const active = a.id === selectedAgencyId;
+
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setSelectedAgencyId(a.id)}
+                        className={[
+                          "w-full sm:w-[260px] rounded-2xl border p-4 text-left transition",
+                          active
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-base font-semibold truncate">
+                            {a.name}
                           </div>
-                          <div className="mt-2 text-sm opacity-90">Statut : ACTIVE</div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
+                          <Badge tone="muted">OWNER</Badge>
+                        </div>
+                        <div className="mt-2 text-sm opacity-90">
+                          Statut : ACTIVE
+                        </div>
 
-                {selectedAgency ? (
-                  <div className="mt-5 rounded-2xl border border-slate-200 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs text-slate-500">Espace sélectionné</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {selectedAgency.name}
-                        </p>
-                      </div>
+                        {/* ✅ Archiver (sauf active) */}
+                        {!active ? (
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                archiveAgency(a.id);
+                              }}
+                              disabled={busy}
+                              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                            >
+                              🗑️ Archiver
+                            </button>
+                          </div>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
 
+              {selectedAgency ? (
+                <div className="mt-5 rounded-2xl border border-slate-200 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Espace sélectionné</p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {selectedAgency.name}
+                      </p>
+                    </div>
+
+                    {/* KEY actions only if owner */}
+                    {isOwnerOfSelected ? (
                       <div className="flex items-center gap-2">
-                        {agencyKey?.id ? (
+                        {agencyKey?.key ? (
                           <>
                             <button
                               type="button"
-                              onClick={() => copyToClipboard(agencyKey.id)}
+                              onClick={() => copyToClipboard(agencyKey.key)}
                               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
                             >
                               Copier la clé
@@ -555,85 +618,100 @@ export default function ProfilePage() {
                           </button>
                         )}
                       </div>
-                    </div>
+                    ) : (
+                      <Badge tone="muted">Clé réservée au OWNER</Badge>
+                    )}
+                  </div>
 
-                    {agencyKey?.id ? (
+                  {isOwnerOfSelected ? (
+                    agencyKey?.key ? (
                       <div className="mt-3 text-sm text-slate-700">
                         <span className="font-medium">Clé :</span>{" "}
                         <code className="rounded-lg bg-slate-50 px-2 py-1 border border-slate-200">
-                          {agencyKey.id}
+                          {agencyKey.key}
                         </code>
                       </div>
                     ) : (
                       <p className="mt-3 text-sm text-slate-500">
                         Aucune clé active pour le moment.
                       </p>
-                    )}
+                    )
+                  ) : null}
 
-                    <div className="mt-5">
-                      <h4 className="text-sm font-semibold text-slate-900">
-                        Membres ({members.length})
-                      </h4>
+                  <div className="mt-5">
+                    <h4 className="text-sm font-semibold text-slate-900">
+                      Membres ({members.length})
+                    </h4>
 
-                      <div className="mt-3 space-y-2">
-                        {members.length === 0 ? (
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                            Aucun membre.
-                          </div>
-                        ) : (
-                          members.map((m) => (
-                            <div
-                              key={m.membership.id}
-                              className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3"
-                            >
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium text-slate-900 truncate">
-                                  {m.profile?.full_name ?? "Utilisateur"}
-                                </div>
-                                <div className="text-xs text-slate-500">
-                                  {m.membership.user_id}
-                                </div>
+                    <div className="mt-3 space-y-2">
+                      {members.length === 0 ? (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                          Aucun membre.
+                        </div>
+                      ) : (
+                        members.map((m) => (
+                          <div
+                            key={m.membership.id}
+                            className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-slate-900 truncate">
+                                {m.profile?.full_name ?? "Utilisateur"}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <Badge tone="muted">{m.membership.role}</Badge>
-                                <Badge tone={m.membership.status === "ACTIVE" ? "success" : "info"}>
-                                  {m.membership.status}
-                                </Badge>
+                              <div className="text-xs text-slate-500">
+                                {m.membership.user_id}
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+                            <div className="flex items-center gap-2">
+                              <Badge tone="muted">{m.membership.role}</Badge>
+                              <Badge
+                                tone={
+                                  m.membership.status === "ACTIVE"
+                                    ? "success"
+                                    : "info"
+                                }
+                              >
+                                {m.membership.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
 
-                      {/* futur */}
-                      <div className="mt-4">
-                        <button
-                          type="button"
-                          disabled
-                          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed"
-                          title="À venir : invitations email"
-                        >
-                          Inviter un membre (bientôt)
-                        </button>
-                      </div>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        disabled
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed"
+                        title="À venir : invitations email"
+                      >
+                        Inviter un membre (bientôt)
+                      </button>
                     </div>
                   </div>
-                ) : null}
-              </Card>
-            </>
+                </div>
+              ) : null}
+            </Card>
           )}
 
           {tab === "WORK" && (
-            <Card title="Work" subtitle="Agences où vous collaborez (CM / MEMBER).">
+            <Card
+              title="Work"
+              subtitle="Agences où vous collaborez (CM / MEMBER)."
+            >
               <div className="flex flex-wrap gap-3">
                 {workAgencies.length === 0 ? (
-                  <p className="text-sm text-slate-500">Aucune collaboration pour le moment.</p>
+                  <p className="text-sm text-slate-500">
+                    Aucune collaboration pour le moment.
+                  </p>
                 ) : (
                   workAgencies.map((a) => {
                     const active = a.id === selectedAgencyId;
                     const myMem = memberships.find(
                       (m) => m.user_id === userId && m.agency_id === a.id
                     );
+
                     return (
                       <button
                         key={a.id}
@@ -647,7 +725,9 @@ export default function ProfilePage() {
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-base font-semibold truncate">{a.name}</div>
+                          <div className="text-base font-semibold truncate">
+                            {a.name}
+                          </div>
                           <Badge tone="muted">{myMem?.role ?? "MEMBER"}</Badge>
                         </div>
                         <div className="mt-2 text-sm opacity-90">
@@ -680,11 +760,24 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <div className="text-sm">
                   <span className="text-slate-500">Agence :</span>{" "}
-                  <span className="font-semibold text-slate-900">{selectedAgency.name}</span>
+                  <span className="font-semibold text-slate-900">
+                    {selectedAgency.name}
+                  </span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  id: <code className="rounded bg-slate-50 border px-1">{selectedAgency.id}</code>
-                </div>
+
+                {/* ✅ On cache l'ID (moins d'infos) */}
+                {isOwnerOfSelected && agencyKey?.key ? (
+                  <div className="text-sm">
+                    <span className="text-slate-500">Clé :</span>{" "}
+                    <code className="rounded bg-slate-50 border px-2 py-1">
+                      {agencyKey.key}
+                    </code>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-500">
+                    (ID caché)
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-sm text-slate-500">Aucun espace sélectionné.</p>
