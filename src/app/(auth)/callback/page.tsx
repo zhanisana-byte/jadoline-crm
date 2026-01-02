@@ -8,34 +8,41 @@ function CallbackInner() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-
   const ran = useRef(false);
+
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
-    if (ran.current) return; // ✅ évite double exécution (React Strict Mode)
+    if (ran.current) return;
     ran.current = true;
 
     async function run() {
       const code = searchParams.get("code");
-
       if (!code) {
         router.replace("/login?error=missing_code");
         return;
       }
 
-      setStatus("Validation de votre session…");
+      setStatus("Validation de la session…");
 
-      // 1) Exchange auth code → session
       const { error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) {
         router.replace("/login?error=confirmation");
         return;
       }
 
-      // 2) Join via clé (si elle existe)
-      const joinCode = localStorage.getItem("join_code")?.trim() || "";
+      // ✅ user must exist now
+      const { data: userRes } = await supabase.auth.getUser();
+      const user = userRes?.user;
+      if (!user) {
+        router.replace("/login?error=user_missing");
+        return;
+      }
 
+      const joinCode = localStorage.getItem("join_code")?.trim() || "";
+      localStorage.removeItem("join_code");
+
+      // 1) Si code → join
       if (joinCode) {
         setStatus("Connexion à votre espace…");
 
@@ -43,36 +50,22 @@ function CallbackInner() {
           p_code: joinCode,
         });
 
-        // Nettoyer quoi qu'il arrive
-        localStorage.removeItem("join_code");
-
-        // Si invalide : on laisse connecté, mais on continue sans rejoindre
-        if (joinErr || !res?.ok) {
-          router.replace("/dashboard?join=invalid_code");
+        if (!joinErr && res?.ok) {
+          router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
           return;
         }
 
-        // res.type peut être "FITNESS" ou autre selon ton backend
-        router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
-        return;
+        // ✅ si code invalide → on continue quand même (créer espace)
+        setStatus("Clé invalide, création de votre espace…");
       }
 
-      // 3) Si pas de clé → créer agence par défaut (après confirmation email)
-      setStatus("Création de votre espace…");
-
-      const { data: userRes, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userRes?.user) {
-        router.replace("/login?error=user_missing");
-        return;
-      }
-
+      // 2) Sinon (ou join failed) → créer agence par défaut
       const fullName =
-        (userRes.user.user_metadata as any)?.full_name ||
-        (userRes.user.email?.split("@")[0] ?? "Nouveau compte");
+        (user.user_metadata as any)?.full_name ||
+        (user.email?.split("@")[0] ?? "Nouveau compte");
 
       const defaultAgencyName = `Agence de ${fullName}`;
 
-      // Si déjà créé (ex: user revient sur callback), ça ne doit pas bloquer
       await supabase.rpc("create_default_agency", { p_name: defaultAgencyName });
 
       router.replace("/dashboard");
