@@ -14,7 +14,8 @@
     "next": "15.2.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "react-international-phone": "^4.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
@@ -28,4 +29,3 @@
     "autoprefixer": "^10.4.20"
   }
 }
-
