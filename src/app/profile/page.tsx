@@ -9,7 +9,7 @@ type MemberRole = "OWNER" | "MEMBER";
 type ProfileRow = {
   user_id: string;
   full_name: string | null;
-  role: Role; // rôle global actuel (tu peux le garder)
+  role: Role;
   agency_id: string | null; // ancien MVP (optionnel)
   created_at: string;
   avatar_url?: string | null;
@@ -23,10 +23,12 @@ type AgencyRow = {
 type MembershipRow = {
   agency_id: string;
   user_id: string;
-  member_role: MemberRole;     // OWNER / MEMBER
-  workspace_role: string;      // CM / FITNESS / OWNER (comme tu veux)
+  member_role: MemberRole; // OWNER / MEMBER
+  workspace_role: string; // CM / FITNESS / OWNER (comme tu veux)
   joined_at: string;
-  agencies?: AgencyRow;        // join
+
+  // Supabase peut renvoyer un objet OU un array selon le join
+  agencies?: AgencyRow | AgencyRow[] | null;
 };
 
 type MemberViewRow = {
@@ -38,13 +40,18 @@ type MemberViewRow = {
     full_name: string | null;
     avatar_url?: string | null;
   } | null;
-  auth_email?: string | null; // option si tu joins via vue, sinon vide
 };
 
 type AgencyKeyRow = {
   code: string;
   is_active: boolean;
   created_at: string;
+};
+
+// ---- Helpers ----
+const firstAgency = (a?: AgencyRow | AgencyRow[] | null): AgencyRow | null => {
+  if (!a) return null;
+  return Array.isArray(a) ? a[0] ?? null : a;
 };
 
 const Card = ({ children }: { children: React.ReactNode }) => (
@@ -75,7 +82,13 @@ const CardBody = ({ children }: { children: React.ReactNode }) => (
   <div className="p-5">{children}</div>
 );
 
-const Badge = ({ children, tone = "gray" }: { children: React.ReactNode; tone?: "gray" | "green" | "amber" | "blue" | "red" }) => {
+const Badge = ({
+  children,
+  tone = "gray",
+}: {
+  children: React.ReactNode;
+  tone?: "gray" | "green" | "amber" | "blue" | "red";
+}) => {
   const cls =
     tone === "green"
       ? "bg-green-50 text-green-700 border-green-100"
@@ -87,7 +100,9 @@ const Badge = ({ children, tone = "gray" }: { children: React.ReactNode; tone?: 
       ? "bg-red-50 text-red-700 border-red-100"
       : "bg-slate-50 text-slate-700 border-slate-100";
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${cls}`}>
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${cls}`}
+    >
       {children}
     </span>
   );
@@ -117,7 +132,12 @@ const Btn = ({
       ? "text-slate-700 hover:bg-slate-50"
       : "border border-slate-200 text-slate-800 hover:bg-slate-50";
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`${base} ${cls}`}
+    >
       {children}
     </button>
   );
@@ -140,8 +160,12 @@ export default function ProfileV2Page() {
   const [memberships, setMemberships] = useState<MembershipRow[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string | null>(null);
 
-  const selectedMembership = memberships.find((m) => m.agency_id === selectedAgencyId) || null;
-  const selectedAgency = selectedMembership?.agencies || null;
+  const selectedMembership =
+    memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+
+  const selectedAgency =
+    firstAgency(selectedMembership?.agencies) || null;
+
   const isOwnerInSelected = selectedMembership?.member_role === "OWNER";
 
   const [agencyMembers, setAgencyMembers] = useState<MemberViewRow[]>([]);
@@ -178,7 +202,9 @@ export default function ProfileV2Page() {
       }
 
       setEmail(user.email ?? "");
-      setEmailConfirmed(!!(user.email_confirmed_at || (user as any).confirmed_at));
+      setEmailConfirmed(
+        !!(user.email_confirmed_at || (user as any).confirmed_at)
+      );
 
       // Profile
       const { data: p, error: pErr } = await supabase
@@ -199,13 +225,15 @@ export default function ProfileV2Page() {
       // Memberships + join agencies
       const { data: ms, error: msErr } = await supabase
         .from("agency_members")
-        .select("agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)")
+        .select(
+          "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)"
+        )
         .eq("user_id", user.id);
 
       if (msErr) {
         setMemberships([]);
       } else {
-        const list = (ms || []) as MembershipRow[];
+        const list = (ms || []) as unknown as MembershipRow[];
         setMemberships(list);
 
         // select first agency by default
@@ -233,11 +261,13 @@ export default function ProfileV2Page() {
       // Members of the agency (join users_profile)
       const { data: membersData } = await supabase
         .from("agency_members")
-        .select("user_id, member_role, workspace_role, joined_at, users_profile(full_name, avatar_url)")
+        .select(
+          "user_id, member_role, workspace_role, joined_at, users_profile(full_name, avatar_url)"
+        )
         .eq("agency_id", selectedAgencyId)
         .order("joined_at", { ascending: true });
 
-      setAgencyMembers((membersData || []) as any);
+      setAgencyMembers((membersData || []) as unknown as MemberViewRow[]);
 
       // Latest active key (owner only)
       if (isOwnerInSelected) {
@@ -250,7 +280,7 @@ export default function ProfileV2Page() {
           .limit(1)
           .maybeSingle();
 
-        setAgencyKey((keyData as any) || null);
+        setAgencyKey((keyData as AgencyKeyRow) || null);
       } else {
         setAgencyKey(null);
       }
@@ -285,7 +315,11 @@ export default function ProfileV2Page() {
     if (!newPwd || newPwd.length < 8) return flash("Mot de passe trop court.");
 
     const { error } = await supabase.auth.updateUser({ password: newPwd });
-    flash(error ? "Erreur lors du changement du mot de passe." : "Mot de passe modifié avec succès.");
+    flash(
+      error
+        ? "Erreur lors du changement du mot de passe."
+        : "Mot de passe modifié avec succès."
+    );
   };
 
   const resendEmail = async () => {
@@ -307,7 +341,9 @@ export default function ProfileV2Page() {
     setBusy(true);
 
     // RPC create_agency(p_name text) returns uuid
-    const { data, error } = await supabase.rpc("create_agency", { p_name: newAgencyName.trim() });
+    const { data, error } = await supabase.rpc("create_agency", {
+      p_name: newAgencyName.trim(),
+    });
 
     if (error || !data) {
       flash("Impossible de créer l’espace.");
@@ -321,10 +357,12 @@ export default function ProfileV2Page() {
     // reload memberships quickly
     const { data: ms } = await supabase
       .from("agency_members")
-      .select("agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)")
-      .eq("user_id", profile?.user_id || "");
+      .select(
+        "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)"
+      )
+      .eq("user_id", profile.user_id);
 
-    const list = (ms || []) as MembershipRow[];
+    const list = (ms || []) as unknown as MembershipRow[];
     setMemberships(list);
     setSelectedAgencyId(String(data)); // select created
     setBusy(false);
@@ -335,7 +373,9 @@ export default function ProfileV2Page() {
     setBusy(true);
 
     // RPC generate_agency_key(p_agency_id uuid) returns text
-    const { data, error } = await supabase.rpc("generate_agency_key", { p_agency_id: selectedAgencyId });
+    const { data, error } = await supabase.rpc("generate_agency_key", {
+      p_agency_id: selectedAgencyId,
+    });
 
     if (error || !data) {
       flash("Impossible de générer la clé.");
@@ -344,7 +384,11 @@ export default function ProfileV2Page() {
     }
 
     flash("Nouvelle clé générée ✅");
-    setAgencyKey({ code: String(data), is_active: true, created_at: new Date().toISOString() });
+    setAgencyKey({
+      code: String(data),
+      is_active: true,
+      created_at: new Date().toISOString(),
+    });
     setBusy(false);
   };
 
@@ -353,7 +397,9 @@ export default function ProfileV2Page() {
     setBusy(true);
 
     // RPC join_agency_with_code(p_code text) returns uuid
-    const { data, error } = await supabase.rpc("join_agency_with_code", { p_code: joinCode.trim() });
+    const { data, error } = await supabase.rpc("join_agency_with_code", {
+      p_code: joinCode.trim(),
+    });
 
     if (error || !data) {
       flash("Clé invalide ou accès refusé.");
@@ -367,10 +413,12 @@ export default function ProfileV2Page() {
     // reload memberships
     const { data: ms } = await supabase
       .from("agency_members")
-      .select("agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)")
-      .eq("user_id", profile?.user_id || "");
+      .select(
+        "agency_id, user_id, member_role, workspace_role, joined_at, agencies(id, name)"
+      )
+      .eq("user_id", profile.user_id);
 
-    const list = (ms || []) as MembershipRow[];
+    const list = (ms || []) as unknown as MembershipRow[];
     setMemberships(list);
     setSelectedAgencyId(String(data));
     setBusy(false);
@@ -435,7 +483,10 @@ export default function ProfileV2Page() {
         <Card>
           <CardHeader title="Profil" subtitle="Impossible de charger le profil." />
           <CardBody>
-            <p className="text-slate-700">Vérifie que le compte est connecté et que la table users_profile contient une ligne pour cet utilisateur.</p>
+            <p className="text-slate-700">
+              Vérifie que le compte est connecté et que la table users_profile
+              contient une ligne pour cet utilisateur.
+            </p>
           </CardBody>
         </Card>
       </div>
@@ -448,11 +499,21 @@ export default function ProfileV2Page() {
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Profil</h1>
-          <p className="text-slate-600 mt-1">Gérez vos informations et vos espaces de travail.</p>
+          <p className="text-slate-600 mt-1">
+            Gérez vos informations et vos espaces de travail.
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge tone={profile.role === "OWNER" ? "green" : profile.role === "CM" ? "blue" : "amber"}>
+          <Badge
+            tone={
+              profile.role === "OWNER"
+                ? "green"
+                : profile.role === "CM"
+                ? "blue"
+                : "amber"
+            }
+          >
             Rôle global : {profile.role}
           </Badge>
           {toast && (
@@ -499,7 +560,11 @@ export default function ProfileV2Page() {
                 <div className="w-16 h-16 rounded-2xl bg-slate-100 overflow-hidden flex items-center justify-center border border-slate-200">
                   {profile.avatar_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={profile.avatar_url} alt="avatar" className="w-full h-full object-cover" />
+                    <img
+                      src={profile.avatar_url}
+                      alt="avatar"
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <span className="text-slate-500 text-xs">Photo</span>
                   )}
@@ -508,7 +573,9 @@ export default function ProfileV2Page() {
                 <div className="flex-1">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs font-medium text-slate-600">Nom complet</label>
+                      <label className="text-xs font-medium text-slate-600">
+                        Nom complet
+                      </label>
                       <input
                         className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-200"
                         value={fullName}
@@ -519,7 +586,9 @@ export default function ProfileV2Page() {
                     </div>
 
                     <div>
-                      <label className="text-xs font-medium text-slate-600">Email (lecture seule)</label>
+                      <label className="text-xs font-medium text-slate-600">
+                        Email (lecture seule)
+                      </label>
                       <input
                         className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-700"
                         value={email}
@@ -528,7 +597,9 @@ export default function ProfileV2Page() {
                     </div>
 
                     <div>
-                      <label className="text-xs font-medium text-slate-600">Créé le</label>
+                      <label className="text-xs font-medium text-slate-600">
+                        Créé le
+                      </label>
                       <input
                         className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-700"
                         value={safeDate(profile.created_at)}
@@ -537,11 +608,17 @@ export default function ProfileV2Page() {
                     </div>
 
                     <div>
-                      <label className="text-xs font-medium text-slate-600">Sécurité</label>
+                      <label className="text-xs font-medium text-slate-600">
+                        Sécurité
+                      </label>
                       <div className="mt-1 flex flex-wrap gap-2">
-                        <Btn onClick={changePassword}>Changer mot de passe</Btn>
+                        <Btn onClick={changePassword}>
+                          Changer mot de passe
+                        </Btn>
                         {!emailConfirmed && (
-                          <Btn onClick={resendEmail}>Renvoyer confirmation email</Btn>
+                          <Btn onClick={resendEmail}>
+                            Renvoyer confirmation email
+                          </Btn>
                         )}
                       </div>
                     </div>
@@ -549,7 +626,9 @@ export default function ProfileV2Page() {
 
                   <div className="mt-4 flex items-center gap-3">
                     <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <span className="text-sm text-slate-700">Changer photo</span>
+                      <span className="text-sm text-slate-700">
+                        Changer photo
+                      </span>
                       <input
                         type="file"
                         className="hidden"
@@ -595,6 +674,7 @@ export default function ProfileV2Page() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {memberships.map((m) => {
                     const active = m.agency_id === selectedAgencyId;
+                    const ag = firstAgency(m.agencies);
                     return (
                       <button
                         key={m.agency_id}
@@ -607,7 +687,7 @@ export default function ProfileV2Page() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="font-semibold">
-                            {m.agencies?.name || "Agence sans nom"}
+                            {ag?.name || "Agence sans nom"}
                           </div>
                           <span
                             className={`text-xs px-2 py-1 rounded-full border ${
@@ -620,11 +700,19 @@ export default function ProfileV2Page() {
                           </span>
                         </div>
 
-                        <div className={`mt-2 text-sm ${active ? "text-white/80" : "text-slate-600"}`}>
+                        <div
+                          className={`mt-2 text-sm ${
+                            active ? "text-white/80" : "text-slate-600"
+                          }`}
+                        >
                           Accès : {m.workspace_role || "CM"}
                         </div>
 
-                        <div className={`mt-1 text-xs ${active ? "text-white/70" : "text-slate-500"}`}>
+                        <div
+                          className={`mt-1 text-xs ${
+                            active ? "text-white/70" : "text-slate-500"
+                          }`}
+                        >
                           Rejoint le {safeDate(m.joined_at)}
                         </div>
                       </button>
@@ -637,17 +725,27 @@ export default function ProfileV2Page() {
               <div className="mt-6 border-t border-slate-100 pt-5">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                   <div>
-                    <div className="text-sm text-slate-500">Espace sélectionné</div>
+                    <div className="text-sm text-slate-500">
+                      Espace sélectionné
+                    </div>
                     <div className="text-xl font-semibold text-slate-900">
                       {selectedAgency?.name || "—"}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       {selectedMembership ? (
                         <>
-                          <Badge tone={selectedMembership.member_role === "OWNER" ? "green" : "blue"}>
+                          <Badge
+                            tone={
+                              selectedMembership.member_role === "OWNER"
+                                ? "green"
+                                : "blue"
+                            }
+                          >
                             {selectedMembership.member_role}
                           </Badge>
-                          <Badge tone="gray">{selectedMembership.workspace_role}</Badge>
+                          <Badge tone="gray">
+                            {selectedMembership.workspace_role}
+                          </Badge>
                         </>
                       ) : (
                         <Badge tone="amber">Aucun</Badge>
@@ -657,22 +755,30 @@ export default function ProfileV2Page() {
 
                   <div className="flex flex-wrap gap-2">
                     {isOwnerInSelected ? (
-                      <Btn variant="primary" disabled={busy || !selectedAgencyId} onClick={generateKey}>
+                      <Btn
+                        variant="primary"
+                        disabled={busy || !selectedAgencyId}
+                        onClick={generateKey}
+                      >
                         Générer / Régénérer clé
                       </Btn>
                     ) : (
-                      <Badge tone="amber">Accès limité : clé réservée au propriétaire</Badge>
+                      <Badge tone="amber">
+                        Accès limité : clé réservée au propriétaire
+                      </Badge>
                     )}
                   </div>
                 </div>
 
-                {/* Key */}
+                {/* Key + stats */}
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="md:col-span-2 p-4 rounded-2xl border border-slate-200 bg-slate-50">
-                    <div className="text-xs font-medium text-slate-600">Clé d’accès (rejoindre)</div>
+                    <div className="text-xs font-medium text-slate-600">
+                      Clé d’accès (rejoindre)
+                    </div>
                     <div className="mt-2 flex items-center gap-2">
                       <span className="font-mono text-sm px-3 py-2 rounded-xl bg-white border border-slate-200">
-                        {isOwnerInSelected ? (agencyKey?.code || "—") : "—"}
+                        {isOwnerInSelected ? agencyKey?.code || "—" : "—"}
                       </span>
                       {isOwnerInSelected && agencyKey?.code && (
                         <Btn onClick={() => copy(agencyKey.code)}>Copier</Btn>
@@ -686,7 +792,9 @@ export default function ProfileV2Page() {
                   </div>
 
                   <div className="p-4 rounded-2xl border border-slate-200">
-                    <div className="text-xs font-medium text-slate-600">Membres</div>
+                    <div className="text-xs font-medium text-slate-600">
+                      Membres
+                    </div>
                     <div className="mt-2 text-2xl font-semibold text-slate-900">
                       {agencyMembers.length}
                     </div>
@@ -698,22 +806,35 @@ export default function ProfileV2Page() {
 
                 {/* Members list */}
                 <div className="mt-4">
-                  <div className="text-sm font-semibold text-slate-900 mb-2">Liste des membres</div>
+                  <div className="text-sm font-semibold text-slate-900 mb-2">
+                    Liste des membres
+                  </div>
 
                   <div className="border border-slate-200 rounded-2xl overflow-hidden">
                     {agencyMembers.length === 0 ? (
-                      <div className="p-4 text-slate-600">Aucun membre trouvé.</div>
+                      <div className="p-4 text-slate-600">
+                        Aucun membre trouvé.
+                      </div>
                     ) : (
                       <div className="divide-y divide-slate-100">
                         {agencyMembers.map((m) => (
-                          <div key={m.user_id} className="p-4 flex items-center justify-between gap-4">
+                          <div
+                            key={m.user_id}
+                            className="p-4 flex items-center justify-between gap-4"
+                          >
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="w-10 h-10 rounded-xl bg-slate-100 overflow-hidden border border-slate-200 flex items-center justify-center">
                                 {m.users_profile?.avatar_url ? (
                                   // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={m.users_profile.avatar_url} alt="" className="w-full h-full object-cover" />
+                                  <img
+                                    src={m.users_profile.avatar_url}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
                                 ) : (
-                                  <span className="text-xs text-slate-500">👤</span>
+                                  <span className="text-xs text-slate-500">
+                                    👤
+                                  </span>
                                 )}
                               </div>
 
@@ -728,7 +849,13 @@ export default function ProfileV2Page() {
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
-                              <Badge tone={m.member_role === "OWNER" ? "green" : "gray"}>{m.member_role}</Badge>
+                              <Badge
+                                tone={
+                                  m.member_role === "OWNER" ? "green" : "gray"
+                                }
+                              >
+                                {m.member_role}
+                              </Badge>
                               <Badge tone="blue">{m.workspace_role}</Badge>
                             </div>
                           </div>
@@ -741,14 +868,19 @@ export default function ProfileV2Page() {
                   <div className="mt-4 p-4 rounded-2xl border border-slate-200 bg-white">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
-                        <div className="font-semibold text-slate-900">Inviter un CM (MVP)</div>
+                        <div className="font-semibold text-slate-900">
+                          Inviter un CM (MVP)
+                        </div>
                         <div className="text-sm text-slate-600 mt-1">
                           Copiez la clé et envoyez-la au freelance (WhatsApp/email). Il rejoindra l’espace avec cette clé.
                         </div>
                       </div>
                       <div className="flex gap-2">
                         {isOwnerInSelected && agencyKey?.code ? (
-                          <Btn variant="primary" onClick={() => copy(agencyKey.code)}>
+                          <Btn
+                            variant="primary"
+                            onClick={() => copy(agencyKey.code)}
+                          >
                             Copier la clé
                           </Btn>
                         ) : (
@@ -757,7 +889,6 @@ export default function ProfileV2Page() {
                       </div>
                     </div>
                   </div>
-
                 </div>
               </div>
             </CardBody>
@@ -820,28 +951,40 @@ export default function ProfileV2Page() {
           </Card>
         </div>
 
-        {/* Right column: quick actions / help */}
+        {/* Right column */}
         <aside className="lg:col-span-4">
           <div className="sticky top-6 space-y-6">
             <Card>
-              <CardHeader title="Récap permissions" subtitle="Comprendre l’accès global vs limité." />
+              <CardHeader
+                title="Récap permissions"
+                subtitle="Comprendre l’accès global vs limité."
+              />
               <CardBody>
                 <ul className="space-y-3 text-sm text-slate-700">
                   <li className="flex items-start gap-2">
                     <span className="mt-1">✅</span>
-                    <span><b>Rôle global</b> : {profile.role} (niveau compte)</span>
+                    <span>
+                      <b>Rôle global</b> : {profile.role} (niveau compte)
+                    </span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="mt-1">🏢</span>
-                    <span><b>Accès par espace</b> : OWNER/MEMBER + workspace_role</span>
+                    <span>
+                      <b>Accès par espace</b> : OWNER/MEMBER + workspace_role
+                    </span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="mt-1">🔑</span>
-                    <span>La <b>clé</b> appartient à l’espace. Seul OWNER peut régénérer.</span>
+                    <span>
+                      La <b>clé</b> appartient à l’espace. Seul OWNER peut
+                      régénérer.
+                    </span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="mt-1">👥</span>
-                    <span>Un CM freelance peut être membre de plusieurs espaces.</span>
+                    <span>
+                      Un CM freelance peut être membre de plusieurs espaces.
+                    </span>
                   </li>
                 </ul>
               </CardBody>
@@ -849,10 +992,15 @@ export default function ProfileV2Page() {
 
             {!emailConfirmed && (
               <Card>
-                <CardHeader title="Activation du compte" subtitle="Email non confirmé." right={<Badge tone="amber">Action</Badge>} />
+                <CardHeader
+                  title="Activation du compte"
+                  subtitle="Email non confirmé."
+                  right={<Badge tone="amber">Action</Badge>}
+                />
                 <CardBody>
                   <p className="text-sm text-slate-700">
-                    Veuillez confirmer votre adresse email afin d’activer votre compte.
+                    Veuillez confirmer votre adresse email afin d’activer votre
+                    compte.
                   </p>
                   <div className="mt-3">
                     <Btn onClick={resendEmail}>Renvoyer l’email</Btn>
@@ -860,15 +1008,6 @@ export default function ProfileV2Page() {
                 </CardBody>
               </Card>
             )}
-
-            <Card>
-              <CardHeader title="Tip UX" subtitle="Petit plus pro." />
-              <CardBody>
-                <p className="text-sm text-slate-700">
-                  Tu peux ajouter plus tard : <b>retirer un membre</b>, <b>changer workspace_role</b>, et <b>invitation email</b>.
-                </p>
-              </CardBody>
-            </Card>
           </div>
         </aside>
       </div>
