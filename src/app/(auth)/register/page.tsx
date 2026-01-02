@@ -24,11 +24,14 @@ export default function RegisterPage() {
     setMsg(null);
 
     try {
-      // 1) signup
+      // 1) signup (✅ force redirect vers votre domaine, pas localhost)
       const { error: signErr } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { full_name: fullName.trim() } },
+        options: {
+          data: { full_name: fullName.trim() },
+          emailRedirectTo: "https://www.jadoline.com/auth/callback",
+        },
       });
       if (signErr) throw signErr;
 
@@ -141,11 +144,7 @@ export default function RegisterPage() {
             </div>
 
             <button className="btn-primary w-full" disabled={loading}>
-              {loading
-                ? "Création..."
-                : hasCode
-                ? "Rejoindre avec la clé"
-                : "Créer votre compte"}
+              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer votre compte"}
             </button>
           </form>
 
