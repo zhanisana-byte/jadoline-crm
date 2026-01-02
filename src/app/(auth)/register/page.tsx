@@ -8,9 +8,8 @@ export default function RegisterPage() {
   const supabase = createClient();
   const router = useRouter();
 
-  const [agencyName, setAgencyName] = useState("");
   const [fullName, setFullName] = useState("");
-  const [joinCode, setJoinCode] = useState("");
+  const [joinCode, setJoinCode] = useState(""); // optionnel (rejoindre)
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -26,12 +25,12 @@ export default function RegisterPage() {
 
     try {
       // 1) signup
-      const { error } = await supabase.auth.signUp({
-        email,
+      const { error: signErr } = await supabase.auth.signUp({
+        email: email.trim(),
         password,
-        options: { data: { full_name: fullName } },
+        options: { data: { full_name: fullName.trim() } },
       });
-      if (error) throw error;
+      if (signErr) throw signErr;
 
       // 2) session check (si email confirmation ON => pas de session)
       const { data: sess } = await supabase.auth.getSession();
@@ -45,17 +44,29 @@ export default function RegisterPage() {
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
           p_code: joinCode.trim(),
         });
+
         if (joinErr || !res?.ok) {
           setMsg("Clé invalide ❌");
           return;
         }
+
         router.push(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
         return;
       }
 
-      // 4) sinon renommer agence (OWNER)
-      if (agencyName.trim()) {
-        await supabase.rpc("rename_my_agency", { p_name: agencyName.trim() });
+      // 4) sinon => créer agence par défaut (nom auto)
+      // ⚠️ Avoir une RPC côté Supabase (recommandé) : create_default_agency(p_name text)
+      // qui crée l'agence si absente + met owner + users_profile.agency_id.
+      const defaultAgencyName = `Agence de ${fullName.trim() || "Nouveau compte"}`;
+
+      const { data: created, error: createErr } = await supabase.rpc("create_default_agency", {
+        p_name: defaultAgencyName,
+      });
+
+      if (createErr) {
+        // Fallback message: le compte est créé mais l'agence auto a échoué
+        setMsg("Compte créé ✅ (Agence non initialisée). Contact admin.");
+        return;
       }
 
       router.push("/dashboard");
@@ -72,17 +83,14 @@ export default function RegisterPage() {
         <div className="card auth-card-inner">
           <h1 className="auth-title">Créer un compte</h1>
           <p className="auth-subtitle">
-            Rejoins une agence avec une clé, ou crée ton propre espace.
+            {hasCode
+              ? "Tu rejoins un espace existant via une clé."
+              : "Tu crées ton propre espace (agence / freelance)."}
           </p>
 
-          {msg && (
-            <div className="alert alert-info">
-              {msg}
-            </div>
-          )}
+          {msg && <div className="alert alert-info">{msg}</div>}
 
           <form className="auth-form" onSubmit={onSubmit}>
-            {/* Clé optionnelle */}
             <div className="field">
               <label>Clé (optionnelle)</label>
               <input
@@ -93,22 +101,9 @@ export default function RegisterPage() {
                 autoComplete="off"
               />
               <p className="helper">
-                Si tu as une clé, tu seras automatiquement rattaché(e) au bon espace.
+                Si tu as une clé, colle-la ici. Sinon laisse vide pour créer ton espace.
               </p>
             </div>
-
-            {/* Nom d'agence seulement si pas de clé */}
-            {!hasCode && (
-              <div className="field">
-                <label>Nom de l’agence</label>
-                <input
-                  className="input"
-                  value={agencyName}
-                  onChange={(e) => setAgencyName(e.target.value)}
-                  placeholder="Ex: Sana Agency"
-                />
-              </div>
-            )}
 
             <div className="divider">Infos</div>
 
@@ -147,7 +142,7 @@ export default function RegisterPage() {
             </div>
 
             <button className="btn-primary w-full" disabled={loading}>
-              {loading ? "Création..." : "Créer mon compte"}
+              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer mon compte"}
             </button>
           </form>
 
