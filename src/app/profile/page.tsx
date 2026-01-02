@@ -10,7 +10,12 @@ import JoinAgencyCard from "@/components/profile/JoinAgencyCard";
 import QuickRecapCard from "@/components/profile/QuickRecapCard";
 
 import { Badge } from "@/components/profile/ui";
-import type { ProfileRow } from "@/components/profile/types";
+import type {
+  ProfileRow,
+  MembershipRow,
+  MemberViewRow,
+  AgencyKeyRow,
+} from "@/components/profile/types";
 
 type TabKey = "INFO" | "MY_AGENCIES" | "WORK";
 
@@ -29,12 +34,18 @@ export default function ProfilePage() {
   const [email, setEmail] = useState("");
   const [emailConfirmed, setEmailConfirmed] = useState(true);
 
+  // Workspace data
+  const [memberships, setMemberships] = useState<MembershipRow[]>([]);
+  const [selectedAgencyId, setSelectedAgencyId] = useState<string | null>(null);
+  const [members, setMembers] = useState<MemberViewRow[]>([]);
+  const [agencyKey, setAgencyKey] = useState<AgencyKeyRow | null>(null);
+
   const flash = (m: string) => {
     setToast(m);
     setTimeout(() => setToast(null), 2500);
   };
 
-  // LOAD auth + profile
+  // ---------- Load auth + profile + memberships ----------
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -51,6 +62,7 @@ export default function ProfilePage() {
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user.email_confirmed_at || (user as any).confirmed_at));
 
+      // profile
       const { data: p, error: pErr } = await supabase
         .from("users_profile")
         .select("user_id, full_name, role, created_at, avatar_url")
@@ -62,15 +74,111 @@ export default function ProfilePage() {
         setLoading(false);
         return;
       }
-
       setProfile(p as ProfileRow);
+
+      // memberships
+      // ⚠️ IMPORTANT: adapte les colonnes selon ta table agency_members
+      // Chez toi on voit: agency_id, user_id, role, status (+ id)
+      const { data: ms, error: msErr } = await supabase
+        .from("agency_members")
+        .select("agency_id, user_id, role, status, agencies(id,name)")
+        .eq("user_id", user.id);
+
+      if (msErr) {
+        flash(msErr.message || "Erreur chargement agences");
+        setMemberships([]);
+      } else {
+        // On mappe vers ton type MembershipRow attendu par WorkspaceCard
+        const mapped = (ms || []).map((m: any) => ({
+          agency_id: m.agency_id,
+          user_id: m.user_id,
+          member_role: m.role,           // <-- mapping: role -> member_role
+          workspace_role: "ALL",          // <-- placeholder si pas dans DB
+          joined_at: new Date().toISOString(), // <-- placeholder si pas dans DB
+          agencies: m.agencies,
+        })) as MembershipRow[];
+
+        setMemberships(mapped);
+
+        if (!selectedAgencyId && mapped.length) {
+          setSelectedAgencyId(mapped[0].agency_id);
+        }
+      }
+
       setLoading(false);
     };
 
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
-  // callback pour ProfileInfoCard
+  // ---------- Derived ----------
+  const selectedMembership =
+    memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+
+  const isOwner = selectedMembership?.member_role === "OWNER";
+
+  const onSelectAgency = (agencyId: string) => {
+    setSelectedAgencyId(agencyId);
+  };
+
+  // ---------- Load members + key for selected agency ----------
+  useEffect(() => {
+    const loadAgencyDetails = async () => {
+      if (!selectedAgencyId) {
+        setMembers([]);
+        setAgencyKey(null);
+        return;
+      }
+
+      // members list
+      // ⚠️ adapte les colonnes : tu as role + status
+      const { data: mems, error: memErr } = await supabase
+        .from("agency_members")
+        .select("user_id, role, status, users_profile(full_name, avatar_url)")
+        .eq("agency_id", selectedAgencyId);
+
+      if (memErr) {
+        // souvent: RLS/permission denied
+        flash(memErr.message || "Erreur chargement membres");
+        setMembers([]);
+      } else {
+        const mappedMembers = (mems || []).map((m: any) => ({
+          user_id: m.user_id,
+          member_role: m.role,           // role -> member_role
+          workspace_role: m.status || "ACTIVE", // status -> workspace_role (ou l’inverse selon ton choix)
+          joined_at: new Date().toISOString(),
+          users_profile: m.users_profile,
+        })) as MemberViewRow[];
+
+        setMembers(mappedMembers);
+      }
+
+      // agency key (only owner)
+      if (isOwner) {
+        const { data: key, error: keyErr } = await supabase
+          .from("agency_keys")
+          .select("code, is_active, created_at")
+          .eq("agency_id", selectedAgencyId)
+          .eq("is_active", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (keyErr) {
+          setAgencyKey(null);
+        } else {
+          setAgencyKey((key as AgencyKeyRow) || null);
+        }
+      } else {
+        setAgencyKey(null);
+      }
+    };
+
+    loadAgencyDetails();
+  }, [selectedAgencyId, isOwner, supabase]);
+
+  // ---------- Actions ----------
   const onSaveName = async (newName: string) => {
     if (!authUserId) return;
     setBusy(true);
@@ -89,12 +197,51 @@ export default function ProfilePage() {
     setBusy(false);
   };
 
+  const onCopy = async (txt: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+      flash("Copié ✅");
+    } catch {
+      flash("Copie impossible");
+    }
+  };
+
+  // ⚠️ Ici on appelle un RPC (recommandé) pour générer une clé
+  // Si tu n’as pas encore ce RPC, dis-moi et je te donne le SQL exact.
+  const onGenerateKey = async () => {
+    if (!selectedAgencyId) return;
+    setBusy(true);
+
+    const { data, error } = await supabase.rpc("generate_agency_key", {
+      p_agency_id: selectedAgencyId,
+    });
+
+    if (error || !data) {
+      flash("Impossible de générer une clé");
+      setBusy(false);
+      return;
+    }
+
+    flash("Clé générée ✅");
+    // recharge clé
+    const { data: key } = await supabase
+      .from("agency_keys")
+      .select("code, is_active, created_at")
+      .eq("agency_id", selectedAgencyId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    setAgencyKey((key as AgencyKeyRow) || null);
+    setBusy(false);
+  };
+
   if (loading) return <div className="p-6">Chargement…</div>;
   if (!profile) return <div className="p-6">Profil introuvable</div>;
 
   return (
     <div className="max-w-6xl mx-auto p-6">
-      {/* Header */}
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-slate-900">Profil</h1>
@@ -113,7 +260,6 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="mt-6 flex flex-wrap gap-2">
         <TabButton active={tab === "INFO"} onClick={() => setTab("INFO")}>
           Infos
@@ -128,9 +274,7 @@ export default function ProfilePage() {
         </TabButton>
       </div>
 
-      {/* Content */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT */}
         <div className="lg:col-span-8 space-y-6">
           {tab === "INFO" && (
             <ProfileInfoCard
@@ -144,20 +288,39 @@ export default function ProfilePage() {
 
           {tab === "MY_AGENCIES" && (
             <>
-              <WorkspaceCard />
+              <WorkspaceCard
+                memberships={memberships}
+                selectedAgencyId={selectedAgencyId}
+                onSelectAgency={onSelectAgency}
+                members={members}
+                isOwner={!!isOwner}
+                agencyKey={agencyKey}
+                onGenerateKey={onGenerateKey}
+                onCopy={onCopy}
+                busy={busy}
+              />
               <CreateAgencyCard />
             </>
           )}
 
           {tab === "WORK" && (
             <>
-              <WorkspaceCard />
+              <WorkspaceCard
+                memberships={memberships}
+                selectedAgencyId={selectedAgencyId}
+                onSelectAgency={onSelectAgency}
+                members={members}
+                isOwner={!!isOwner}
+                agencyKey={agencyKey}
+                onGenerateKey={onGenerateKey}
+                onCopy={onCopy}
+                busy={busy}
+              />
               <JoinAgencyCard />
             </>
           )}
         </div>
 
-        {/* RIGHT */}
         <aside className="lg:col-span-4">
           <div className="sticky top-6 space-y-6">
             <QuickRecapCard />
