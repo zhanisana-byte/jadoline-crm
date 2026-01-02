@@ -1,48 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function AuthCallbackPage() {
+function CallbackInner() {
   const supabase = createClient();
   const router = useRouter();
-  const params = useSearchParams();
-  const [msg, setMsg] = useState("Confirmation en cours…");
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    async function run() {
-      const code = params.get("code");
+    const code = searchParams.get("code");
 
-      // Cas 1: pas de code dans l'URL
-      if (!code) {
-        router.replace("/login?error=missing_code");
-        return;
-      }
-
-      // Cas 2: échange du code contre une session
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-      if (error) {
-        router.replace("/login?error=confirmation");
-        return;
-      }
-
-      // ✅ Confirmation OK
-      router.replace("/login?confirmed=1");
+    if (!code) {
+      router.replace("/login?error=missing_code");
+      return;
     }
 
-    run();
-  }, [params, router, supabase]);
+    supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+      if (error) {
+        router.replace("/login?error=confirmation");
+      } else {
+        router.replace("/login?confirmed=1");
+      }
+    });
+  }, [searchParams, router, supabase]);
 
   return (
-    <div className="auth-wrap">
-      <div className="auth-card">
-        <div className="card auth-card-inner">
-          <h1 className="auth-title">{msg}</h1>
-          <p className="auth-subtitle">Veuillez patienter.</p>
-        </div>
-      </div>
+    <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
+      Confirmation en cours…
     </div>
+  );
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center text-sm text-slate-500">
+        Chargement…
+      </div>
+    }>
+      <CallbackInner />
+    </Suspense>
   );
 }
