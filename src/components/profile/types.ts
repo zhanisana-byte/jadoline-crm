@@ -12,6 +12,7 @@ export type ProfileRow = {
 export type AgencyRow = {
   id: string;
   name: string | null;
+  archived_at?: string | null; // optionnel si tu l’utilises
 };
 
 export type MembershipRow = {
@@ -35,6 +36,13 @@ export type MemberViewRow = {
 
 export type AgencyKeyRow = {
   id: string;
+  key: string;                 // ✅ important (la clé à copier)
   active: boolean;
   created_at: string;
+
+  // optionnels (si tu les sélectionnes plus tard)
+  agency_id?: string;
+  is_active?: boolean;
+  expires_at?: string | null;
+  created_by?: string;
 };
