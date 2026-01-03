@@ -639,3 +639,5 @@ export default function ProfilePage() {
     </div>
   );
 }
+const { data, error } = await supabase.rpc("ensure_personal_agency");
+if (error) setMsg(error.message);
