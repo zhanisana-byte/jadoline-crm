@@ -3,16 +3,6 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-function cn(...cls: (string | false | null | undefined)[]) {
-  return cls.filter(Boolean).join(" ");
-}
-
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v.trim()
-  );
-}
-
 export default function JoinAgencyCard() {
   const supabase = createClient();
 
@@ -21,24 +11,21 @@ export default function JoinAgencyCard() {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function join() {
-    setMsg(null);
-    const clean = agencyId.trim();
-
-    if (!isUuid(clean)) {
-      setMsg("Agency ID invalide (UUID).");
-      return;
-    }
-
     setLoading(true);
+    setMsg(null);
+
     try {
       const { error } = await supabase.rpc("join_with_agency_id", {
-        p_agency_id: clean,
+        p_agency_id: agencyId,
       });
 
       if (error) throw error;
 
-      setMsg("✅ Rejoint avec succès. Va dans Work (collaborations) puis “Rafraîchir”.");
+      setMsg("Agence rejointe avec succès ✅");
       setAgencyId("");
+
+      // 🔄 refresh page to reload Work
+      window.location.reload();
     } catch (e: any) {
       setMsg(e?.message ?? "Erreur");
     } finally {
@@ -47,40 +34,32 @@ export default function JoinAgencyCard() {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="p-5">
-        <h2 className="text-lg font-semibold">Rejoindre une agence</h2>
-        <p className="text-sm text-slate-500">
-          Entre l’<b>Agency ID</b> reçu (pas de clé).
-        </p>
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+      <h2 className="text-lg font-semibold">Rejoindre une agence</h2>
+      <p className="text-sm text-slate-500 mt-1">
+        Entre l’Agency ID reçu (pas de clé).
+      </p>
 
-        {msg && (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-            {msg}
-          </div>
-        )}
+      <input
+        value={agencyId}
+        onChange={(e) => setAgencyId(e.target.value)}
+        placeholder="Agency ID (uuid)"
+        className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+      />
 
-        <div className="mt-4">
-          <label className="text-xs text-slate-500">Agency ID (uuid)</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-            value={agencyId}
-            onChange={(e) => setAgencyId(e.target.value)}
-            placeholder="ex: b60314f1-1751-49ec-a863-..."
-          />
+      <button
+        onClick={join}
+        disabled={loading || !agencyId}
+        className="mt-3 w-full rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-800 disabled:opacity-50"
+      >
+        {loading ? "Connexion..." : "Rejoindre"}
+      </button>
+
+      {msg && (
+        <div className="mt-3 text-sm text-emerald-700">
+          {msg}
         </div>
-
-        <button
-          onClick={join}
-          disabled={loading}
-          className={cn(
-            "mt-4 w-full rounded-xl px-4 py-2 text-sm font-semibold",
-            loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
-          )}
-        >
-          {loading ? "..." : "Rejoindre"}
-        </button>
-      </div>
+      )}
     </div>
   );
 }
