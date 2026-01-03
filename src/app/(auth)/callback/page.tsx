@@ -9,6 +9,7 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ran = useRef(false);
+
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
@@ -24,26 +25,15 @@ function CallbackInner() {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) return router.replace("/login?error=confirmation");
 
-        const { data: userRes, error: userErr } = await supabase.auth.getUser();
-        const user = userRes?.user;
-        if (userErr || !user) return router.replace("/login?error=user_missing");
-
-        // ✅ clé depuis metadata (pas localStorage)
-        const joinCode = (user.user_metadata?.join_code || "").toString().trim();
-
-        if (joinCode) {
-          setStatus("Connexion à votre espace…");
-          const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
-            p_code: joinCode,
-          });
-
-          if (!joinErr && res?.ok) {
-            return router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
-          }
-
-          setStatus("Clé invalide, ouverture de votre espace…");
+        // ✅ Important: garantir agence + clé après confirmation
+        setStatus("Initialisation de votre espace…");
+        try {
+          await supabase.rpc("ensure_personal_agency");
+        } catch {
+          // pas bloquant si déjà OK
         }
 
+        setStatus("Redirection…");
         router.replace("/dashboard");
       } catch {
         router.replace("/login?error=callback_failed");
