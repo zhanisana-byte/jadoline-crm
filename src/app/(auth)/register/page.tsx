@@ -13,7 +13,7 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [agencyId, setAgencyId] = useState(""); // ✅ NEW: agency id optionnel
+  const [joinAgencyId, setJoinAgencyId] = useState(""); // ✅ nouveau (optionnel)
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -27,8 +27,6 @@ export default function RegisterPage() {
     return "https://www.jadoline.com";
   }, []);
 
-  const hasAgency = agencyId.trim().length > 0;
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -37,11 +35,7 @@ export default function RegisterPage() {
     try {
       const cleanEmail = email.trim();
       const cleanName = fullName.trim();
-      const cleanAgencyId = agencyId.trim() || null;
-
-      // backup optionnel (si metadata échoue)
-      if (cleanAgencyId) localStorage.setItem("join_agency_id", cleanAgencyId);
-      else localStorage.removeItem("join_agency_id");
+      const cleanJoin = joinAgencyId.trim();
 
       const { error: signErr } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -49,7 +43,7 @@ export default function RegisterPage() {
         options: {
           data: {
             full_name: cleanName,
-            join_agency_id: cleanAgencyId, // ✅ stocké dans metadata
+            join_agency_id: cleanJoin || null, // ✅ stocker pour callback
           },
           emailRedirectTo: `${siteUrl}/callback`,
         },
@@ -64,15 +58,13 @@ export default function RegisterPage() {
         throw signErr;
       }
 
-      // confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      // confirmation OFF (rare)
-      router.push("/dashboard");
+      router.push("/profile");
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
     } finally {
@@ -85,9 +77,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-semibold">Créer un compte</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {hasAgency
-            ? "Vous rejoignez une agence via Agency ID."
-            : "Vous créez votre propre agence automatiquement après confirmation email."}
+          Un espace (agence perso) sera créé automatiquement après confirmation email.
         </p>
 
         {msg && (
@@ -98,20 +88,6 @@ export default function RegisterPage() {
 
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
-            <label className="text-sm font-medium">Agency ID (optionnel)</label>
-            <input
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
-              value={agencyId}
-              onChange={(e) => setAgencyId(e.target.value)}
-              placeholder="Ex : 2a99c5c2-3734-490a-993a-18b774e5c582"
-              autoComplete="off"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Si vous avez un Agency ID, collez-le ici. Sinon, laissez vide.
-            </p>
-          </div>
-
-          <div>
             <label className="text-sm font-medium">Nom complet</label>
             <input
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
@@ -120,6 +96,19 @@ export default function RegisterPage() {
               placeholder="Ex : Sana Zhani"
               required
             />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Agency ID à rejoindre (optionnel)</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+              value={joinAgencyId}
+              onChange={(e) => setJoinAgencyId(e.target.value)}
+              placeholder="UUID de l’agence (si tu as reçu un ID)"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Si tu le renseignes, tu rejoins automatiquement après confirmation email.
+            </p>
           </div>
 
           <div>
@@ -155,7 +144,7 @@ export default function RegisterPage() {
               loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
             )}
           >
-            {loading ? "Création..." : hasAgency ? "Créer et rejoindre" : "Créer mon compte"}
+            {loading ? "Création..." : "Créer mon compte"}
           </button>
 
           <p className="text-sm text-slate-600">
