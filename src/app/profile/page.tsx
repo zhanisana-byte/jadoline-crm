@@ -87,16 +87,15 @@ export default function ProfilePage() {
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user as any).email_confirmed_at);
 
-      // ✅ assure agence perso + clé active (fonction SQL)
-      // (si ta fonction dépend de auth.uid(), elle marche seulement côté app)
+      // ✅ assure agence perso + clé active (RPC)
       try {
         await supabase.rpc("ensure_personal_agency");
       } catch {}
 
-      // ✅ users_profile
+      // ✅ users_profile (IMPORTANT: récupérer agency_id)
       const { data: prof, error: profErr } = await supabase
         .from("users_profile")
-        .select("user_id, full_name, role, created_at, avatar_url")
+        .select("user_id, full_name, role, created_at, avatar_url, agency_id")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -108,19 +107,29 @@ export default function ProfilePage() {
         return;
       }
 
+      const agencyId = (prof as any).agency_id as string | null;
+
       setProfile({
         user_id: prof.user_id,
         full_name: prof.full_name ?? null,
         role: prof.role,
         created_at: prof.created_at,
         avatar_url: prof.avatar_url ?? null,
-      });
+        // @ts-ignore (selon ton type ProfileRow)
+        agency_id: agencyId ?? null,
+      } as any);
 
-      // ✅ agence perso = agencies.owner_id = user.id
+      if (!agencyId) {
+        setLoading(false);
+        setMsg("Erreur: agency_id manquant dans users_profile.");
+        return;
+      }
+
+      // ✅ agence perso via users_profile.agency_id (PAS owner_id)
       const { data: agency, error: aErr } = await supabase
         .from("agencies")
         .select("id, name, archived_at")
-        .eq("owner_id", user.id)
+        .eq("id", agencyId)
         .maybeSingle();
 
       if (!mounted) return;
@@ -133,12 +142,12 @@ export default function ProfilePage() {
 
       setMyAgency(agency as any);
 
-      // ✅ CORRECTION: clé unique active (supporte is_active OU active)
+      // ✅ clé unique active (supporte is_active OU active)
       const { data: key, error: kErr } = await supabase
         .from("agency_keys")
         .select("id, key, active, is_active, created_at, agency_id")
-        .eq("agency_id", agency.id)
-        .or("active.eq.true,is_active.eq.true")
+        .eq("agency_id", agencyId)
+        .or("is_active.eq.true,active.eq.true")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -307,11 +316,22 @@ export default function ProfilePage() {
     }
   }
 
+  async function copyAgencyId() {
+    const id = myAgency?.id ?? "";
+    if (!id) return setMsg("Aucun ID à copier.");
+    try {
+      await navigator.clipboard.writeText(id);
+      setMsg("✅ Agency ID copié.");
+    } catch {
+      setMsg("⚠️ Impossible de copier.");
+    }
+  }
+
   async function onJoin(code: string) {
     setBusy(true);
     setMsg(null);
 
-    const { data: res, error } = await supabase.rpc("join_with_code", { p_code: code });
+    const { data: res, error } = await supabase.rpc("join_with_code", { p_code: code.trim() });
 
     setBusy(false);
 
@@ -347,22 +367,21 @@ export default function ProfilePage() {
     const ids = Array.from(new Set(accessRows.map((x) => x.client_id))).filter(Boolean);
     if (ids.length === 0) {
       setMyClients([]);
-      return;
+    } else {
+      const { data: clients } = await supabase
+        .from("clients")
+        .select("id, name, logo_url")
+        .in("id", ids);
+
+      setMyClients((clients ?? []) as any);
     }
 
-    const { data: clients } = await supabase
-      .from("clients")
-      .select("id, name, logo_url")
-      .in("id", ids);
-
-    setMyClients((clients ?? []) as any);
-
-    // ✅ refresh key aussi (important)
+    // ✅ refresh key aussi
     const { data: key } = await supabase
       .from("agency_keys")
       .select("id, key, active, is_active, created_at, agency_id")
       .eq("agency_id", myAgency.id)
-      .or("active.eq.true,is_active.eq.true")
+      .or("is_active.eq.true,active.eq.true")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -517,9 +536,9 @@ export default function ProfilePage() {
 
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="p-5 border-b border-slate-100">
-                <h2 className="text-lg font-semibold">Ma clé (unique)</h2>
+                <h2 className="text-lg font-semibold">Mon identifiant + clé</h2>
                 <p className="text-sm text-slate-500">
-                  Partage cette clé pour que les collaborateurs rejoignent ton agence.
+                  Agency ID (interne) + Clé à partager pour inviter un CM.
                 </p>
               </div>
 
@@ -529,6 +548,30 @@ export default function ProfilePage() {
                   <div className="font-semibold">{myAgency?.name ?? "—"}</div>
                 </div>
 
+                {/* ✅ Agency ID */}
+                <div>
+                  <div className="text-xs text-slate-500">Agency ID</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-slate-50 font-mono"
+                      value={myAgency?.id ?? ""}
+                      disabled
+                      placeholder="(aucun id)"
+                    />
+                    <button
+                      onClick={copyAgencyId}
+                      disabled={!myAgency?.id}
+                      className={cn(
+                        "rounded-xl border px-4 py-2 text-sm font-medium",
+                        !myAgency?.id ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
+                      )}
+                    >
+                      Copier
+                    </button>
+                  </div>
+                </div>
+
+                {/* ✅ Key */}
                 <div>
                   <div className="text-xs text-slate-500">Clé active</div>
                   <div className="mt-1 flex items-center gap-2">
@@ -543,19 +586,18 @@ export default function ProfilePage() {
                       disabled={!(myKey as any)?.key}
                       className={cn(
                         "rounded-xl border px-4 py-2 text-sm font-medium",
-                        !(myKey as any)?.key
-                          ? "opacity-60 cursor-not-allowed"
-                          : "hover:bg-slate-50"
+                        !(myKey as any)?.key ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
                       )}
                     >
                       Copier
                     </button>
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    Pas de régénération : 1 seule clé unique.
+                    Clé unique : pas de régénération.
                   </p>
                 </div>
 
+                {/* Join (pour tester / rejoindre une autre agence) */}
                 <JoinAgencyCard busy={busy} onJoin={onJoin} />
               </div>
             </section>
