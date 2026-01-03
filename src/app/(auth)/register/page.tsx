@@ -8,18 +8,25 @@ function cn(...cls: (string | false | null | undefined)[]) {
   return cls.filter(Boolean).join(" ");
 }
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v.trim()
+  );
+}
+
 export default function RegisterPage() {
   const supabase = createClient();
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [joinAgencyId, setJoinAgencyId] = useState(""); // ✅ nouveau (optionnel)
+  const [agencyIdToJoin, setAgencyIdToJoin] = useState(""); // ✅ optionnel (UUID)
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // ✅ pas de hardcode: utilise NEXT_PUBLIC_SITE_URL si dispo sinon fallback
   const siteUrl = useMemo(() => {
     const env = process.env.NEXT_PUBLIC_SITE_URL;
     if (env && env.startsWith("http")) return env.replace(/\/$/, "");
@@ -35,7 +42,12 @@ export default function RegisterPage() {
     try {
       const cleanEmail = email.trim();
       const cleanName = fullName.trim();
-      const cleanJoin = joinAgencyId.trim();
+      const cleanAgency = agencyIdToJoin.trim();
+
+      if (cleanAgency && !isUuid(cleanAgency)) {
+        setMsg("Agency ID invalide (format UUID).");
+        return;
+      }
 
       const { error: signErr } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -43,7 +55,8 @@ export default function RegisterPage() {
         options: {
           data: {
             full_name: cleanName,
-            join_agency_id: cleanJoin || null, // ✅ stocker pour callback
+            // ✅ on stocke l'agency ID à rejoindre dans le metadata
+            join_agency_id: cleanAgency || null,
           },
           emailRedirectTo: `${siteUrl}/callback`,
         },
@@ -58,13 +71,15 @@ export default function RegisterPage() {
         throw signErr;
       }
 
+      // ✅ si confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      router.push("/profile");
+      // ✅ si confirmation OFF
+      router.push("/dashboard");
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
     } finally {
@@ -77,7 +92,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-semibold">Créer un compte</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Un espace (agence perso) sera créé automatiquement après confirmation email.
+          Après confirmation email, ton profil sera créé + tu auras un Agency ID.
         </p>
 
         {msg && (
@@ -99,15 +114,15 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Agency ID à rejoindre (optionnel)</label>
+            <label className="text-sm font-medium">Agency ID (optionnel)</label>
             <input
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-              value={joinAgencyId}
-              onChange={(e) => setJoinAgencyId(e.target.value)}
-              placeholder="UUID de l’agence (si tu as reçu un ID)"
+              value={agencyIdToJoin}
+              onChange={(e) => setAgencyIdToJoin(e.target.value)}
+              placeholder="UUID de l'agence à rejoindre"
             />
             <p className="text-xs text-slate-500 mt-1">
-              Si tu le renseignes, tu rejoins automatiquement après confirmation email.
+              Si tu mets un Agency ID ici, tu rejoins cette agence automatiquement.
             </p>
           </div>
 
