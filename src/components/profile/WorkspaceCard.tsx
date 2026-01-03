@@ -3,15 +3,18 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type WorkAgency = {
+type AgencyRow = {
+  id: string;
+  name: string | null;
+  created_at: string | null;
+};
+
+type WorkAgencyRow = {
   agency_id: string;
   role: string | null;
   status: string | null;
-  agencies: {
-    id: string;
-    name: string | null;
-    created_at?: string | null;
-  } | null;
+  // ✅ Supabase le typpe souvent comme ARRAY
+  agencies: AgencyRow[] | null;
 };
 
 function cn(...cls: (string | false | null | undefined)[]) {
@@ -23,7 +26,7 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [items, setItems] = useState<WorkAgency[]>([]);
+  const [items, setItems] = useState<WorkAgencyRow[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -39,8 +42,6 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
           return;
         }
 
-        // ✅ Agences rejointes = agency_members pour ce user
-        // On récupère aussi agencies (nom)
         const { data, error } = await supabase
           .from("agency_members")
           .select(
@@ -60,8 +61,10 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
 
         if (error) throw error;
 
-        // ⚠️ On ne montre pas "mon agence perso" dans Work (optionnel)
-        const rows = (data ?? []) as WorkAgency[];
+        // ✅ Cast SAFE (unknown -> type)
+        const rows = ((data ?? []) as unknown) as WorkAgencyRow[];
+
+        // Option: cacher "mon agence perso" dans Work
         const filtered = myAgencyId
           ? rows.filter((r) => r.agency_id !== myAgencyId)
           : rows;
@@ -77,13 +80,11 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Work (collaborations)</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Les agences que tu as rejointes (via Agency ID).
-          </p>
-        </div>
+      <div>
+        <h2 className="text-lg font-semibold">Work (collaborations)</h2>
+        <p className="text-sm text-slate-500 mt-1">
+          Les agences que tu as rejointes (via Agency ID).
+        </p>
       </div>
 
       {loading ? (
@@ -98,34 +99,33 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          {items.map((it) => (
-            <div
-              key={it.agency_id}
-              className="rounded-xl border border-slate-200 p-4"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold">
-                    {it.agencies?.name ?? "Agence"}
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Agency ID: <code>{it.agency_id}</code>
-                  </div>
-                </div>
+          {items.map((it) => {
+            const agency = it.agencies?.[0] ?? null;
 
-                <span
-                  className={cn(
-                    "text-xs rounded-full px-2 py-1 border",
-                    it.role === "OWNER"
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "bg-white text-slate-700 border-slate-200"
-                  )}
-                >
-                  {it.role ?? "CM"}
-                </span>
+            return (
+              <div key={it.agency_id} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">{agency?.name ?? "Agence"}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      Agency ID: <code>{it.agency_id}</code>
+                    </div>
+                  </div>
+
+                  <span
+                    className={cn(
+                      "text-xs rounded-full px-2 py-1 border",
+                      it.role === "OWNER"
+                        ? "bg-slate-900 text-white border-slate-900"
+                        : "bg-white text-slate-700 border-slate-200"
+                    )}
+                  >
+                    {it.role ?? "CM"}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
