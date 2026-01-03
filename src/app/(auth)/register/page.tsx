@@ -13,20 +13,21 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
+  const [agencyId, setAgencyId] = useState(""); // ✅ NEW: agency id optionnel
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ pas de hardcode: utilise NEXT_PUBLIC_SITE_URL si dispo sinon fallback
   const siteUrl = useMemo(() => {
     const env = process.env.NEXT_PUBLIC_SITE_URL;
     if (env && env.startsWith("http")) return env.replace(/\/$/, "");
-    // fallback: pour dev local ou preview
     if (typeof window !== "undefined") return window.location.origin;
     return "https://www.jadoline.com";
   }, []);
+
+  const hasAgency = agencyId.trim().length > 0;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,12 +37,20 @@ export default function RegisterPage() {
     try {
       const cleanEmail = email.trim();
       const cleanName = fullName.trim();
+      const cleanAgencyId = agencyId.trim() || null;
+
+      // backup optionnel (si metadata échoue)
+      if (cleanAgencyId) localStorage.setItem("join_agency_id", cleanAgencyId);
+      else localStorage.removeItem("join_agency_id");
 
       const { error: signErr } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
-          data: { full_name: cleanName }, // ✅ فقط الاسم
+          data: {
+            full_name: cleanName,
+            join_agency_id: cleanAgencyId, // ✅ stocké dans metadata
+          },
           emailRedirectTo: `${siteUrl}/callback`,
         },
       });
@@ -55,14 +64,14 @@ export default function RegisterPage() {
         throw signErr;
       }
 
-      // ✅ si confirmation email ON => pas de session immédiate
+      // confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      // ✅ si confirmation OFF
+      // confirmation OFF (rare)
       router.push("/dashboard");
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
@@ -76,7 +85,9 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-semibold">Créer un compte</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Une agence + une clé seront créées automatiquement après confirmation email.
+          {hasAgency
+            ? "Vous rejoignez une agence via Agency ID."
+            : "Vous créez votre propre agence automatiquement après confirmation email."}
         </p>
 
         {msg && (
@@ -86,6 +97,20 @@ export default function RegisterPage() {
         )}
 
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
+          <div>
+            <label className="text-sm font-medium">Agency ID (optionnel)</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
+              value={agencyId}
+              onChange={(e) => setAgencyId(e.target.value)}
+              placeholder="Ex : 2a99c5c2-3734-490a-993a-18b774e5c582"
+              autoComplete="off"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Si vous avez un Agency ID, collez-le ici. Sinon, laissez vide.
+            </p>
+          </div>
+
           <div>
             <label className="text-sm font-medium">Nom complet</label>
             <input
@@ -130,7 +155,7 @@ export default function RegisterPage() {
               loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
             )}
           >
-            {loading ? "Création..." : "Créer mon compte"}
+            {loading ? "Création..." : hasAgency ? "Créer et rejoindre" : "Créer mon compte"}
           </button>
 
           <p className="text-sm text-slate-600">
