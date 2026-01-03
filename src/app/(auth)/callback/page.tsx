@@ -9,7 +9,6 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ran = useRef(false);
-
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
@@ -31,23 +30,21 @@ function CallbackInner() {
           return;
         }
 
-        const { data: userRes } = await supabase.auth.getUser();
-        const user = userRes?.user;
-        if (!user) {
+        const { data: userRes, error: userErr } = await supabase.auth.getUser();
+        if (userErr || !userRes?.user) {
           router.replace("/login?error=user_missing");
           return;
         }
 
-        // join_code stocké avant signup (optionnel)
-        const joinCode = (localStorage.getItem("join_code") || "").trim();
-        localStorage.removeItem("join_code");
+        const user = userRes.user;
+        const joinCode = (user.user_metadata?.join_code || "").toString().trim();
 
-        // 1) Si on a un code → tenter de rejoindre une agence existante
+        // ✅ Si joinCode existe → tenter join_with_code (AGENCY ou FITNESS)
         if (joinCode) {
           setStatus("Connexion à votre espace…");
 
           const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
-            p_code: joinCode, // ⚠️ doit matcher le param SQL (p_code)
+            p_code: joinCode,
           });
 
           if (!joinErr && res?.ok) {
@@ -55,16 +52,11 @@ function CallbackInner() {
             return;
           }
 
-          // code invalide → on continue quand même
+          // clé invalide → on continue (l’agence perso existe via trigger)
           setStatus("Clé invalide, ouverture de votre espace…");
         }
 
-        // 2) IMPORTANT : plus besoin de create_default_agency ici
-        // car le TRIGGER SQL (handle_new_user) crée automatiquement:
-        // - agence perso
-        // - membre OWNER
-        // - clé active
-
+        // ✅ Sans clé : l’agence perso + clé perso sont créées par trigger SQL
         router.replace("/dashboard");
       } catch {
         router.replace("/login?error=callback_failed");
@@ -79,7 +71,7 @@ function CallbackInner() {
   );
 }
 
-export default function AuthCallbackPage() {
+export default function CallbackPage() {
   return (
     <Suspense
       fallback={
