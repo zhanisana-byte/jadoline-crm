@@ -9,7 +9,6 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ran = useRef(false);
-
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
@@ -25,15 +24,34 @@ function CallbackInner() {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) return router.replace("/login?error=confirmation");
 
-        // ✅ Important: garantir agence + clé après confirmation
-        setStatus("Initialisation de votre espace…");
-        try {
-          await supabase.rpc("ensure_personal_agency");
-        } catch {
-          // pas bloquant si déjà OK
+        const { data: userRes, error: userErr } = await supabase.auth.getUser();
+        const user = userRes?.user;
+        if (userErr || !user) return router.replace("/login?error=user_missing");
+
+        // ✅ lire l'agencyId depuis metadata (priorité)
+        const metaAgencyId = (user.user_metadata?.join_agency_id || "").toString().trim();
+        const lsAgencyId = (localStorage.getItem("join_agency_id") || "").trim();
+        const joinAgencyId = metaAgencyId || lsAgencyId;
+
+        if (joinAgencyId) {
+          setStatus("Connexion à votre agence…");
+
+          const { data: res, error: joinErr } = await supabase.rpc("join_with_agency_id", {
+            p_agency_id: joinAgencyId,
+          });
+
+          if (!joinErr && res?.ok) {
+            // nettoyage
+            localStorage.removeItem("join_agency_id");
+            await supabase.auth.updateUser({ data: { join_agency_id: null } });
+
+            return router.replace("/dashboard");
+          }
+
+          // join failed => fallback dashboard
+          setStatus("Agency ID invalide, ouverture de votre espace…");
         }
 
-        setStatus("Redirection…");
         router.replace("/dashboard");
       } catch {
         router.replace("/login?error=callback_failed");
