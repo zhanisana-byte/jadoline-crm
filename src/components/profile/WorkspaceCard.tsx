@@ -1,120 +1,117 @@
 "use client";
 
-import type { AgencyRow, MembershipViewRow } from "./types";
-import { CopyBtn } from "./ui";
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
-export default function WorkspaceCard(props:
-  | {
-      mode: "my-agency";
-      myAgency: AgencyRow | null;
-      myAgencyId: string | null;
-      members: MembershipViewRow[];
-      onRefresh: () => Promise<void>;
-      onEnsurePersonalAgency: () => Promise<void>;
-    }
-  | {
-      mode: "work";
-      memberships: MembershipViewRow[];
-      onRefresh: () => Promise<void>;
-    }
-) {
-  if (props.mode === "work") {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Mes collaborations</h2>
-          <button
-            onClick={props.onRefresh}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-          >
-            Actualiser
-          </button>
-        </div>
+function cn(...cls: (string | false | null | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
+}
 
-        <div className="mt-4 space-y-3">
-          {props.memberships.length === 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              Aucune collaboration.
-            </div>
-          ) : (
-            props.memberships.map((m) => (
-              <div key={`${m.agency_id}-${m.user_id}`} className="rounded-xl border border-slate-200 p-3">
-                <div className="font-medium">{m.agencies?.name ?? m.agency_id}</div>
-                <div className="text-sm text-slate-600">
-                  Rôle: {m.role ?? "—"} • Statut: {m.status ?? "—"}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    );
+type JoinedRow = {
+  agency_id: string;
+  role: string | null;
+  status: string | null;
+  agencies?: { id: string; name: string | null } | null;
+};
+
+export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | null }) {
+  const supabase = createClient();
+
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [rows, setRows] = useState<JoinedRow[]>([]);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth.user;
+      if (!user) throw new Error("Non connecté.");
+
+      let q = supabase
+        .from("agency_members")
+        .select("agency_id, role, status, agencies:agencies(id, name)")
+        .eq("user_id", user.id)
+        .eq("status", "active");
+
+      // ✅ Exclure mon agence perso du Work
+      if (myAgencyId) q = q.neq("agency_id", myAgencyId);
+
+      const { data, error } = await q.order("created_at", { ascending: false });
+      if (error) throw error;
+
+      setRows((data ?? []) as any);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erreur");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // my-agency
-  const { myAgency, myAgencyId, members, onRefresh, onEnsurePersonalAgency } = props;
+  const hasData = rows.length > 0;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Mon agence</h2>
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="p-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">
+            Agences rejointes {hasData ? `(${rows.length})` : ""}
+          </h2>
+          <p className="text-sm text-slate-500">
+            Ici : uniquement les agences rejointes via <b>Agency ID</b> (pas ton agence perso).
+          </p>
+        </div>
+
         <button
-          onClick={onRefresh}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+          onClick={load}
+          disabled={loading}
+          className={cn(
+            "rounded-xl px-4 py-2 text-sm font-semibold border",
+            loading
+              ? "bg-slate-100 text-slate-500 border-slate-200"
+              : "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+          )}
         >
-          Actualiser
+          {loading ? "Chargement..." : "Rafraîchir"}
         </button>
       </div>
 
-      {!myAgencyId ? (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          Ton profil n’a pas d’agence liée. Clique pour créer ton espace.
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={onEnsurePersonalAgency}
-              className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
-            >
-              Créer mon espace
-            </button>
+      {err && (
+        <div className="px-5 pb-5">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {err}
           </div>
         </div>
-      ) : (
-        <>
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="text-sm text-slate-600">Agence</div>
-            <div className="font-medium">{myAgency?.name ?? "—"}</div>
-
-            <div className="mt-3 text-sm text-slate-600">Agency ID</div>
-            <div className="mt-1 flex items-center">
-              <div className="text-sm font-mono break-all">{myAgencyId}</div>
-              <CopyBtn value={myAgencyId} />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="text-sm text-slate-600 mb-2">Membres</div>
-            {members.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                Aucun membre trouvé.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {members.map((m) => (
-                  <div key={`${m.agency_id}-${m.user_id}`} className="rounded-xl border border-slate-200 p-3">
-                    <div className="font-medium">
-                      {m.users_profile?.full_name ?? m.user_id}
-                    </div>
-                    <div className="text-sm text-slate-600">
-                      {m.role ?? "—"} • {m.status ?? "—"}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
       )}
+
+      <div className="px-5 pb-5">
+        {!hasData ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            Aucune collaboration trouvée. Clique “Rafraîchir”.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((r) => (
+              <div
+                key={r.agency_id}
+                className="rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4"
+              >
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{r.agencies?.name || "Agence"}</div>
+                  <div className="text-xs text-slate-500 truncate">Agency ID: {r.agency_id}</div>
+                </div>
+
+                <div className="text-right">
+                  <div className="text-xs text-slate-500">Rôle</div>
+                  <div className="text-sm font-semibold">{r.role ?? "MEMBER"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
