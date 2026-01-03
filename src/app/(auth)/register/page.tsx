@@ -1,22 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+
+function cn(...cls: (string | false | null | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
+}
 
 export default function RegisterPage() {
   const supabase = createClient();
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [joinCode, setJoinCode] = useState(""); // optionnel
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const hasCode = joinCode.trim().length > 0;
+  // ✅ pas de hardcode: utilise NEXT_PUBLIC_SITE_URL si dispo sinon fallback
+  const siteUrl = useMemo(() => {
+    const env = process.env.NEXT_PUBLIC_SITE_URL;
+    if (env && env.startsWith("http")) return env.replace(/\/$/, "");
+    // fallback: pour dev local ou preview
+    if (typeof window !== "undefined") return window.location.origin;
+    return "https://www.jadoline.com";
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,67 +34,35 @@ export default function RegisterPage() {
     setMsg(null);
 
     try {
-      const code = joinCode.trim();
+      const cleanEmail = email.trim();
+      const cleanName = fullName.trim();
 
-      // ✅ Backup (optionnel) : utile si metadata échoue (rare)
-      if (code) localStorage.setItem("join_code", code);
-      else localStorage.removeItem("join_code");
-
-      // ✅ SIGN UP — redirection email vers /callback
-      // ✅ On stocke join_code dans user_metadata pour que /callback puisse le lire
       const { error: signErr } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: cleanEmail,
         password,
         options: {
-          data: {
-            full_name: fullName.trim(),
-            join_code: code || null, // ✅ IMPORTANT
-          },
-          emailRedirectTo: "https://www.jadoline.com/callback",
+          data: { full_name: cleanName }, // ✅ فقط الاسم
+          emailRedirectTo: `${siteUrl}/callback`,
         },
       });
 
       if (signErr) {
-        if (
-          signErr.message.includes("already registered") ||
-          signErr.message.includes("User already registered")
-        ) {
-          setMsg(
-            "Un compte existe déjà avec cet email. Veuillez vous connecter ou renvoyer l’email de confirmation."
-          );
+        const m = signErr.message.toLowerCase();
+        if (m.includes("already registered") || m.includes("user already registered")) {
+          setMsg("Un compte existe déjà avec cet email. Veuillez vous connecter.");
           return;
         }
         throw signErr;
       }
 
-      // ✅ Si confirmation email activée → pas de session immédiate
+      // ✅ si confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      // ✅ Si confirmation email OFF (rare), on peut rejoindre direct si code
-      if (code) {
-        const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
-          p_code: code,
-        });
-
-        if (joinErr || !res?.ok) {
-          setMsg("Clé invalide ❌");
-          return;
-        }
-
-        // Nettoyage
-        localStorage.removeItem("join_code");
-        await supabase.auth.updateUser({ data: { join_code: null } });
-
-        router.push(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
-        return;
-      }
-
-      // ✅ IMPORTANT : on NE crée PAS d’agence ici.
-      // Ton trigger SQL sur auth.users le fait automatiquement (agence + clé + membership).
+      // ✅ si confirmation OFF
       router.push("/dashboard");
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
@@ -94,78 +72,74 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="auth-wrap">
-      <div className="auth-card">
-        <div className="card auth-card-inner">
-          <h1 className="auth-title">Créer un compte</h1>
-          <p className="auth-subtitle">
-            {hasCode
-              ? "Vous rejoignez un espace existant à l’aide d’une clé."
-              : "Vous créez votre propre espace (agence / freelance)."}
+    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
+        <h1 className="text-2xl font-semibold">Créer un compte</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Une agence + une clé seront créées automatiquement après confirmation email.
+        </p>
+
+        {msg && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            {msg}
+          </div>
+        )}
+
+        <form onSubmit={onSubmit} className="mt-6 space-y-4">
+          <div>
+            <label className="text-sm font-medium">Nom complet</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Ex : Sana Zhani"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Email</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@exemple.com"
+              autoComplete="email"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Mot de passe</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="new-password"
+              required
+            />
+            <p className="text-xs text-slate-500 mt-1">8 caractères minimum recommandés.</p>
+          </div>
+
+          <button
+            disabled={loading}
+            className={cn(
+              "w-full rounded-xl px-4 py-2 text-sm font-semibold",
+              loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
+            )}
+          >
+            {loading ? "Création..." : "Créer mon compte"}
+          </button>
+
+          <p className="text-sm text-slate-600">
+            Déjà un compte ?{" "}
+            <a className="underline" href="/login">
+              Connexion
+            </a>
           </p>
-
-          {msg && <div className="alert alert-info">{msg}</div>}
-
-          <form className="auth-form" onSubmit={onSubmit}>
-            <div className="field">
-              <label>Clé (optionnelle)</label>
-              <input
-                className="input"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
-                placeholder="Clé agence ou clé Fitness"
-                autoComplete="off"
-              />
-              <p className="helper">
-                Si vous avez une clé, collez-la ici. Sinon, laissez vide pour créer votre espace.
-              </p>
-            </div>
-
-            <div className="divider">Informations</div>
-
-            <div className="field">
-              <label>Nom complet</label>
-              <input
-                className="input"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Ex : Sana Zhani"
-              />
-            </div>
-
-            <div className="field">
-              <label>Email</label>
-              <input
-                className="input"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="email@exemple.com"
-                autoComplete="email"
-              />
-            </div>
-
-            <div className="field">
-              <label>Mot de passe</label>
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="new-password"
-              />
-              <p className="helper">8 caractères minimum recommandés.</p>
-            </div>
-
-            <button className="btn-primary w-full" disabled={loading}>
-              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer votre compte"}
-            </button>
-          </form>
-
-          <p className="footer-link">
-            Vous avez déjà un compte ? <a href="/login">Connexion</a>
-          </p>
-        </div>
+        </form>
       </div>
     </div>
   );
