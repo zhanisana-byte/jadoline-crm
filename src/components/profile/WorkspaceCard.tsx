@@ -1,251 +1,120 @@
 "use client";
 
-import type {
-  MembershipRow,
-  MemberViewRow,
-  AgencyKeyRow,
-  AgencyRow,
-} from "@/components/profile/types";
+import type { AgencyRow, MembershipViewRow } from "./types";
+import { CopyBtn } from "./ui";
 
-function cn(...cls: (string | false | null | undefined)[]) {
-  return cls.filter(Boolean).join(" ");
-}
+export default function WorkspaceCard(props:
+  | {
+      mode: "my-agency";
+      myAgency: AgencyRow | null;
+      myAgencyId: string | null;
+      members: MembershipViewRow[];
+      onRefresh: () => Promise<void>;
+      onEnsurePersonalAgency: () => Promise<void>;
+    }
+  | {
+      mode: "work";
+      memberships: MembershipViewRow[];
+      onRefresh: () => Promise<void>;
+    }
+) {
+  if (props.mode === "work") {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Mes collaborations</h2>
+          <button
+            onClick={props.onRefresh}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            Actualiser
+          </button>
+        </div>
 
-function getAgencyName(agencies?: AgencyRow | AgencyRow[] | null) {
-  if (!agencies) return "—";
-  if (Array.isArray(agencies)) return agencies[0]?.name ?? "—";
-  return agencies.name ?? "—";
-}
+        <div className="mt-4 space-y-3">
+          {props.memberships.length === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              Aucune collaboration.
+            </div>
+          ) : (
+            props.memberships.map((m) => (
+              <div key={`${m.agency_id}-${m.user_id}`} className="rounded-xl border border-slate-200 p-3">
+                <div className="font-medium">{m.agencies?.name ?? m.agency_id}</div>
+                <div className="text-sm text-slate-600">
+                  Rôle: {m.role ?? "—"} • Statut: {m.status ?? "—"}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
 
-export default function WorkspaceCard(props: {
-  memberships: MembershipRow[];
-  selectedAgencyId: string | null;
-  onSelectAgency: (agencyId: string) => void;
-
-  members: MemberViewRow[];
-  isOwner: boolean;
-
-  agencyKey: AgencyKeyRow | null;
-  onGenerateKey: () => Promise<void>;
-  onCopy: (txt: string) => Promise<void>;
-
-  onArchiveAgency: (agencyId: string) => Promise<void>;
-
-  busy: boolean;
-}) {
-  const {
-    memberships,
-    selectedAgencyId,
-    onSelectAgency,
-    members,
-    isOwner,
-    agencyKey,
-    onGenerateKey,
-    onCopy,
-    onArchiveAgency,
-    busy,
-  } = props;
-
-  const selected =
-    memberships.find((m) => m.agency_id === selectedAgencyId) || null;
+  // my-agency
+  const { myAgency, myAgencyId, members, onRefresh, onEnsurePersonalAgency } = props;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="p-5 border-b border-slate-100">
-        <h2 className="text-lg font-semibold">Espace de travail</h2>
-        <p className="text-sm text-slate-500">
-          Agences liées + sélection d’un espace.
-        </p>
+    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Mon agence</h2>
+        <button
+          onClick={onRefresh}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          Actualiser
+        </button>
       </div>
 
-      <div className="p-5 space-y-4">
-        {/* Liste agences */}
-        {memberships.length === 0 ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            Aucun espace lié. Crée un espace ou rejoins avec une clé.
+      {!myAgencyId ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Ton profil n’a pas d’agence liée. Clique pour créer ton espace.
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={onEnsurePersonalAgency}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+            >
+              Créer mon espace
+            </button>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {memberships.map((m) => {
-              const active = m.agency_id === selectedAgencyId;
-
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onSelectAgency(m.agency_id)}
-                  className={cn(
-                    "text-left rounded-2xl border px-4 py-3 transition",
-                    active
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white hover:bg-slate-50"
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-base">
-                        {getAgencyName(m.agencies)}
-                      </div>
-                      <div
-                        className={cn(
-                          "text-xs mt-1",
-                          active ? "text-slate-200" : "text-slate-500"
-                        )}
-                      >
-                        Statut : {m.status ?? "—"}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "text-[11px] px-2 py-1 rounded-full border",
-                          active
-                            ? "border-white/20 bg-white/10 text-white"
-                            : "border-slate-200 bg-slate-50 text-slate-700"
-                        )}
-                      >
-                        {m.role}
-                      </span>
-
-                      {/* 🗑️ Archiver (OWNER seulement, pas l’actif) */}
-                      {isOwner && !active && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onArchiveAgency(m.agency_id);
-                          }}
-                          disabled={busy}
-                          className={cn(
-                            "text-[11px] px-2 py-1 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
-                            busy && "opacity-60 cursor-not-allowed"
-                          )}
-                          title="Archiver cette agence"
-                        >
-                          🗑️
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Espace sélectionné + actions */}
-        <div className="flex items-start justify-between gap-3 pt-2">
-          <div>
-            <div className="text-xs text-slate-500">Espace sélectionné</div>
-            <div className="text-lg font-semibold">
-              {selected ? getAgencyName(selected.agencies) : "—"}
-            </div>
-          </div>
-
-          {isOwner && selectedAgencyId && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onGenerateKey}
-                disabled={busy}
-                className={cn(
-                  "rounded-xl px-4 py-2 text-sm font-semibold",
-                  busy
-                    ? "bg-slate-200 text-slate-500"
-                    : "bg-slate-900 text-white hover:bg-slate-800"
-                )}
-              >
-                Générer une clé
-              </button>
-
-              {agencyKey?.key && (
-                <button
-                  type="button"
-                  onClick={() => onCopy(agencyKey.key)}
-                  disabled={busy}
-                  className={cn(
-                    "rounded-xl px-4 py-2 text-sm font-semibold border",
-                    busy
-                      ? "border-slate-200 text-slate-400"
-                      : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                  )}
-                >
-                  Copier la clé
-                </button>
-              )}
-            </div>
-          )}
         </div>
+      ) : (
+        <>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="text-sm text-slate-600">Agence</div>
+            <div className="font-medium">{myAgency?.name ?? "—"}</div>
 
-        {/* Affichage de la clé (optionnel) */}
-        {isOwner && selectedAgencyId && agencyKey?.key ? (
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs text-slate-500">Clé active</div>
-            <div className="flex items-center justify-between gap-3 mt-1">
-              <div className="font-mono text-sm">{agencyKey.key}</div>
-              <button
-                type="button"
-                onClick={() => onCopy(agencyKey.key)}
-                disabled={busy}
-                className={cn(
-                  "text-xs px-3 py-2 rounded-xl border",
-                  busy
-                    ? "border-slate-200 text-slate-400"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                )}
-              >
-                Copier
-              </button>
+            <div className="mt-3 text-sm text-slate-600">Agency ID</div>
+            <div className="mt-1 flex items-center">
+              <div className="text-sm font-mono break-all">{myAgencyId}</div>
+              <CopyBtn value={myAgencyId} />
             </div>
           </div>
-        ) : null}
 
-        {/* Membres */}
-        <div className="rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-            <div className="font-semibold">Membres ({members.length})</div>
-            {!isOwner && (
-              <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
-                Clé réservée au OWNER
-              </span>
-            )}
-          </div>
-
-          {selectedAgencyId ? (
-            members.length === 0 ? (
-              <div className="px-4 py-4 text-sm text-slate-500">
-                Aucun membre.
+          <div className="mt-4">
+            <div className="text-sm text-slate-600 mb-2">Membres</div>
+            {members.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                Aucun membre trouvé.
               </div>
             ) : (
-              <ul className="divide-y divide-slate-100">
+              <div className="space-y-2">
                 {members.map((m) => (
-                  <li
-                    key={m.user_id}
-                    className="px-4 py-3 flex items-center justify-between"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">
-                        {m.users_profile?.full_name ?? "Sans nom"}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        Statut : {m.status ?? "—"}
-                      </div>
+                  <div key={`${m.agency_id}-${m.user_id}`} className="rounded-xl border border-slate-200 p-3">
+                    <div className="font-medium">
+                      {m.users_profile?.full_name ?? m.user_id}
                     </div>
-                    <span className="text-[11px] px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-700">
-                      {m.role}
-                    </span>
-                  </li>
+                    <div className="text-sm text-slate-600">
+                      {m.role ?? "—"} • {m.status ?? "—"}
+                    </div>
+                  </div>
                 ))}
-              </ul>
-            )
-          ) : (
-            <div className="px-4 py-4 text-sm text-slate-500">
-              Sélectionne une agence.
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
