@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -14,7 +14,6 @@ import type {
   ProfileRow,
   MembershipRow,
   MemberViewRow,
-  AgencyKeyRow,
   AgencyRow,
 } from "@/components/profile/types";
 
@@ -31,7 +30,6 @@ export default function ProfilePage() {
   const supabase = createClient();
   const router = useRouter();
 
-  // ✅ 3 tabs: Mes infos / Mon agence / Work (collaborations)
   const [tab, setTab] = useState<"infos" | "mon_agence" | "work">("infos");
 
   const [loading, setLoading] = useState(true);
@@ -41,11 +39,10 @@ export default function ProfilePage() {
   const [email, setEmail] = useState("");
   const [emailConfirmed, setEmailConfirmed] = useState(false);
 
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [profile, setProfile] = useState<(ProfileRow & { agency_id?: string | null }) | null>(null);
 
-  // agence perso + clé unique
+  // ✅ agence perso (ID seulement)
   const [myAgency, setMyAgency] = useState<AgencyRow | null>(null);
-  const [myKey, setMyKey] = useState<AgencyKeyRow | null>(null);
 
   // Mon agence -> équipe + access clients
   const [myMembers, setMyMembers] = useState<MemberViewRow[]>([]);
@@ -87,12 +84,13 @@ export default function ProfilePage() {
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user as any).email_confirmed_at);
 
-      // ✅ assure agence perso + clé active (RPC)
+      // ✅ assure agence perso (fonction SQL)
+      // IMPORTANT: cette fonction doit aussi remplir users_profile.agency_id
       try {
         await supabase.rpc("ensure_personal_agency");
       } catch {}
 
-      // ✅ users_profile (IMPORTANT: récupérer agency_id)
+      // ✅ users_profile (on lit agency_id)
       const { data: prof, error: profErr } = await supabase
         .from("users_profile")
         .select("user_id, full_name, role, created_at, avatar_url, agency_id")
@@ -107,7 +105,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const agencyId = (prof as any).agency_id as string | null;
+      const profileAgencyId = (prof as any).agency_id as string | null;
 
       setProfile({
         user_id: prof.user_id,
@@ -115,45 +113,37 @@ export default function ProfilePage() {
         role: prof.role,
         created_at: prof.created_at,
         avatar_url: prof.avatar_url ?? null,
-        // @ts-ignore (selon ton type ProfileRow)
-        agency_id: agencyId ?? null,
-      } as any);
+        agency_id: profileAgencyId,
+      });
 
-      if (!agencyId) {
+      // ✅ agence perso: on charge via users_profile.agency_id (PLUS FIABLE que owner_id)
+      if (!profileAgencyId) {
         setLoading(false);
-        setMsg("Erreur: agency_id manquant dans users_profile.");
+        setMsg("Votre profil n’est pas lié à une agence (users_profile.agency_id est NULL).");
         return;
       }
 
-      // ✅ agence perso via users_profile.agency_id (PAS owner_id)
       const { data: agency, error: aErr } = await supabase
         .from("agencies")
         .select("id, name, archived_at")
-        .eq("id", agencyId)
+        .eq("id", profileAgencyId)
         .maybeSingle();
 
       if (!mounted) return;
 
-      if (aErr || !agency) {
+      if (aErr) {
         setLoading(false);
-        setMsg("Erreur: agence personnelle introuvable.");
+        setMsg("Accès refusé à l’agence (RLS/policy). Détail: " + humanErr(aErr));
+        return;
+      }
+
+      if (!agency) {
+        setLoading(false);
+        setMsg("Agence introuvable (id=" + profileAgencyId + ").");
         return;
       }
 
       setMyAgency(agency as any);
-
-      // ✅ clé unique active (supporte is_active OU active)
-      const { data: key, error: kErr } = await supabase
-        .from("agency_keys")
-        .select("id, key, active, is_active, created_at, agency_id")
-        .eq("agency_id", agencyId)
-        .or("is_active.eq.true,active.eq.true")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (!kErr) setMyKey((key as any) ?? null);
-      else setMyKey(null);
 
       // ✅ Work memberships (collaborations): role != OWNER
       const { data: mems, error: memErr } = await supabase
@@ -235,7 +225,6 @@ export default function ProfilePage() {
         .in("id", clientIds);
 
       if (!mounted) return;
-
       if (!cErr) setMyClients((clients ?? []) as any);
     }
 
@@ -305,38 +294,37 @@ export default function ProfilePage() {
     setMsg("✅ Nom mis à jour.");
   }
 
-  async function copyMyKey() {
-    const k = (myKey as any)?.key;
-    if (!k) return setMsg("Aucune clé à copier.");
-    try {
-      await navigator.clipboard.writeText(k);
-      setMsg("✅ Clé copiée.");
-    } catch {
-      setMsg("⚠️ Impossible de copier.");
-    }
-  }
-
   async function copyAgencyId() {
-    const id = myAgency?.id ?? "";
+    const id = myAgency?.id;
     if (!id) return setMsg("Aucun ID à copier.");
     try {
       await navigator.clipboard.writeText(id);
-      setMsg("✅ Agency ID copié.");
+      setMsg("✅ ID copié.");
     } catch {
       setMsg("⚠️ Impossible de copier.");
     }
   }
 
-  async function onJoin(code: string) {
+  // ✅ Rejoindre via Agency ID (plus de clé)
+  async function onJoinByAgencyId(agencyId: string) {
     setBusy(true);
     setMsg(null);
 
-    const { data: res, error } = await supabase.rpc("join_with_code", { p_code: code.trim() });
+    const clean = (agencyId || "").trim();
+    if (!clean) {
+      setBusy(false);
+      setMsg("Veuillez entrer un Agency ID.");
+      return;
+    }
+
+    const { data: res, error } = await supabase.rpc("join_with_agency_id", {
+      p_agency_id: clean,
+    });
 
     setBusy(false);
 
     if (error) return setMsg(humanErr(error));
-    if (!res?.ok) return setMsg("Clé invalide ❌");
+    if (!res?.ok) return setMsg(res?.message ?? "Impossible de rejoindre cette agence.");
 
     setMsg("✅ Rejoint avec succès.");
     location.reload();
@@ -367,26 +355,15 @@ export default function ProfilePage() {
     const ids = Array.from(new Set(accessRows.map((x) => x.client_id))).filter(Boolean);
     if (ids.length === 0) {
       setMyClients([]);
-    } else {
-      const { data: clients } = await supabase
-        .from("clients")
-        .select("id, name, logo_url")
-        .in("id", ids);
-
-      setMyClients((clients ?? []) as any);
+      return;
     }
 
-    // ✅ refresh key aussi
-    const { data: key } = await supabase
-      .from("agency_keys")
-      .select("id, key, active, is_active, created_at, agency_id")
-      .eq("agency_id", myAgency.id)
-      .or("is_active.eq.true,active.eq.true")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const { data: clients } = await supabase
+      .from("clients")
+      .select("id, name, logo_url")
+      .in("id", ids);
 
-    setMyKey((key as any) ?? null);
+    setMyClients((clients ?? []) as any);
   }
 
   async function disableMember(memberUserId: string) {
@@ -438,10 +415,7 @@ export default function ProfilePage() {
     await refreshMyAgency();
   }
 
-  // WorkspaceCard: no key generation + no archive
-  async function onGenerateKeyNoop() {
-    setMsg("Clé unique (pas de régénération).");
-  }
+  // WorkspaceCard: (pas de clé)
   async function onArchiveNoop() {
     setMsg("Archivage non disponible.");
   }
@@ -452,6 +426,9 @@ export default function ProfilePage() {
     } catch {
       setMsg("⚠️ Impossible de copier.");
     }
+  }
+  async function onGenerateKeyNoop() {
+    setMsg("Clé supprimée : on travaille avec l’ID.");
   }
 
   // =============================
@@ -534,11 +511,12 @@ export default function ProfilePage() {
               onSaveName={onSaveName}
             />
 
+            {/* ✅ ID ONLY */}
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="p-5 border-b border-slate-100">
-                <h2 className="text-lg font-semibold">Mon identifiant + clé</h2>
+                <h2 className="text-lg font-semibold">Mon identifiant</h2>
                 <p className="text-sm text-slate-500">
-                  Agency ID (interne) + Clé à partager pour inviter un CM.
+                  Agency ID (interne) : à partager pour collaborer.
                 </p>
               </div>
 
@@ -548,7 +526,6 @@ export default function ProfilePage() {
                   <div className="font-semibold">{myAgency?.name ?? "—"}</div>
                 </div>
 
-                {/* ✅ Agency ID */}
                 <div>
                   <div className="text-xs text-slate-500">Agency ID</div>
                   <div className="mt-1 flex items-center gap-2">
@@ -571,34 +548,8 @@ export default function ProfilePage() {
                   </div>
                 </div>
 
-                {/* ✅ Key */}
-                <div>
-                  <div className="text-xs text-slate-500">Clé active</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-slate-50 font-mono"
-                      value={(myKey as any)?.key ?? ""}
-                      disabled
-                      placeholder="(aucune clé)"
-                    />
-                    <button
-                      onClick={copyMyKey}
-                      disabled={!(myKey as any)?.key}
-                      className={cn(
-                        "rounded-xl border px-4 py-2 text-sm font-medium",
-                        !(myKey as any)?.key ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
-                      )}
-                    >
-                      Copier
-                    </button>
-                  </div>
-                  <p className="mt-2 text-xs text-slate-500">
-                    Clé unique : pas de régénération.
-                  </p>
-                </div>
-
-                {/* Join (pour tester / rejoindre une autre agence) */}
-                <JoinAgencyCard busy={busy} onJoin={onJoin} />
+                {/* ✅ Rejoindre via Agency ID */}
+                <JoinAgencyCard busy={busy} onJoinByAgencyId={onJoinByAgencyId} />
               </div>
             </section>
           </div>
