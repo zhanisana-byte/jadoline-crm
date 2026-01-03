@@ -9,6 +9,7 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ran = useRef(false);
+
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
@@ -31,15 +32,16 @@ function CallbackInner() {
         }
 
         const { data: userRes, error: userErr } = await supabase.auth.getUser();
-        if (userErr || !userRes?.user) {
+        const user = userRes?.user;
+
+        if (userErr || !user) {
           router.replace("/login?error=user_missing");
           return;
         }
 
-        const user = userRes.user;
+        // ✅ join_code vient du metadata (PAS localStorage)
         const joinCode = (user.user_metadata?.join_code || "").toString().trim();
 
-        // ✅ Si joinCode existe → tenter join_with_code (AGENCY ou FITNESS)
         if (joinCode) {
           setStatus("Connexion à votre espace…");
 
@@ -52,11 +54,10 @@ function CallbackInner() {
             return;
           }
 
-          // clé invalide → on continue (l’agence perso existe via trigger)
           setStatus("Clé invalide, ouverture de votre espace…");
         }
 
-        // ✅ Sans clé : l’agence perso + clé perso sont créées par trigger SQL
+        // ✅ Sans clé: l’agence perso + clé perso sont gérées par trigger SQL
         router.replace("/dashboard");
       } catch {
         router.replace("/login?error=callback_failed");
