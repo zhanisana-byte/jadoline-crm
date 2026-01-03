@@ -1,19 +1,14 @@
 "use client";
 
-import React from "react";
-import { Card, CardBody, CardHeader } from "./ui";
-
 export default function QuickRecapCard() {
   return (
-    <Card>
-      <CardHeader title="Récap rapide" />
-      <CardBody>
-        <ul className="text-sm text-slate-700 space-y-2">
-          <li>✅ Un utilisateur peut être dans plusieurs agences</li>
-          <li>🔑 La clé appartient à l’agence</li>
-          <li>👥 Un CM peut travailler sur plusieurs agences</li>
-        </ul>
-      </CardBody>
-    </Card>
+    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+      <h2 className="text-lg font-semibold">Récap rapide</h2>
+      <div className="mt-3 space-y-2 text-sm text-slate-700">
+        <div>✅ Un utilisateur peut être dans plusieurs agences</div>
+        <div>🧩 On collabore via l’Agency ID</div>
+        <div>👥 Un CM peut travailler sur plusieurs agences</div>
+      </div>
+    </div>
   );
 }
