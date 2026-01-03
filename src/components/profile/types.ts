@@ -1,48 +1,28 @@
-export type GlobalRole = "OWNER" | "CM" | "FITNESS";
-export type AgencyRole = "OWNER" | "CM" | "MEMBER";
-
 export type ProfileRow = {
   user_id: string;
   full_name: string | null;
-  role: GlobalRole;
+  agency_id: string | null;
+  role: string | null;
   created_at: string;
-  avatar_url?: string | null;
+  avatar_url: string | null;
 };
 
 export type AgencyRow = {
   id: string;
   name: string | null;
-  archived_at?: string | null; // optionnel si tu l’utilises
+  owner_id: string | null;
+  created_at: string;
 };
 
 export type MembershipRow = {
-  id: string;
   agency_id: string;
   user_id: string;
-  role: AgencyRole;
+  role: string | null;
   status: string | null;
-  agencies?: AgencyRow | AgencyRow[] | null;
-};
-
-export type MemberViewRow = {
-  user_id: string;
-  role: AgencyRole;
-  status: string | null;
-  users_profile?: {
-    full_name: string | null;
-    avatar_url?: string | null;
-  } | null;
-};
-
-export type AgencyKeyRow = {
-  id: string;
-  key: string;                 // ✅ important (la clé à copier)
-  active: boolean;
   created_at: string;
+};
 
-  // optionnels (si tu les sélectionnes plus tard)
-  agency_id?: string;
-  is_active?: boolean;
-  expires_at?: string | null;
-  created_by?: string;
+export type MembershipViewRow = MembershipRow & {
+  users_profile?: { user_id: string; full_name: string | null; avatar_url: string | null } | null;
+  agencies?: AgencyRow | null;
 };
