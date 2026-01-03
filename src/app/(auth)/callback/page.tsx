@@ -9,7 +9,6 @@ function CallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ran = useRef(false);
-
   const [status, setStatus] = useState("Confirmation en cours…");
 
   useEffect(() => {
@@ -19,45 +18,32 @@ function CallbackInner() {
     (async () => {
       try {
         const code = searchParams.get("code");
-        if (!code) {
-          router.replace("/login?error=missing_code");
-          return;
-        }
+        if (!code) return router.replace("/login?error=missing_code");
 
         setStatus("Validation de la session…");
         const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          router.replace("/login?error=confirmation");
-          return;
-        }
+        if (error) return router.replace("/login?error=confirmation");
 
         const { data: userRes, error: userErr } = await supabase.auth.getUser();
         const user = userRes?.user;
+        if (userErr || !user) return router.replace("/login?error=user_missing");
 
-        if (userErr || !user) {
-          router.replace("/login?error=user_missing");
-          return;
-        }
-
-        // ✅ join_code vient du metadata (PAS localStorage)
+        // ✅ clé depuis metadata (pas localStorage)
         const joinCode = (user.user_metadata?.join_code || "").toString().trim();
 
         if (joinCode) {
           setStatus("Connexion à votre espace…");
-
           const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
             p_code: joinCode,
           });
 
           if (!joinErr && res?.ok) {
-            router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
-            return;
+            return router.replace(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
           }
 
           setStatus("Clé invalide, ouverture de votre espace…");
         }
 
-        // ✅ Sans clé: l’agence perso + clé perso sont gérées par trigger SQL
         router.replace("/dashboard");
       } catch {
         router.replace("/login?error=callback_failed");
