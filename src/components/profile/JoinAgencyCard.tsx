@@ -1,55 +1,79 @@
 "use client";
 
 import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { humanErr } from "./ui";
 
-function cn(...cls: (string | false | null | undefined)[]) {
-  return cls.filter(Boolean).join(" ");
-}
-
-export default function JoinAgencyCard(props: {
-  busy: boolean;
-  onJoinByAgencyId: (agencyId: string) => Promise<void>;
+export default function JoinAgencyCard({
+  onDone,
+  disabled,
+}: {
+  onDone: () => Promise<void>;
+  disabled?: boolean;
 }) {
-  const { busy, onJoinByAgencyId } = props;
-
+  const supabase = createClient();
   const [agencyId, setAgencyId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function join() {
+    setLoading(true);
+    setMsg(null);
+
+    try {
+      const id = agencyId.trim();
+      if (!id) {
+        setMsg("Veuillez entrer un Agency ID (uuid).");
+        return;
+      }
+
+      const { error } = await supabase.rpc("join_with_agency_id", {
+        p_agency_id: id,
+      });
+
+      if (error) throw error;
+
+      setMsg("✅ Rejoint avec succès.");
+      setAgencyId("");
+      await onDone();
+    } catch (e: any) {
+      setMsg(humanErr(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <section className="rounded-2xl border border-slate-200 overflow-hidden">
-      <div className="p-5 border-b border-slate-100">
-        <h3 className="text-base font-semibold">Rejoindre une agence</h3>
-        <p className="text-sm text-slate-500">
-          Entre l’<b>Agency ID</b> reçu (pas de clé).
-        </p>
-      </div>
+    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+      <h2 className="text-lg font-semibold">Rejoindre une agence</h2>
+      <p className="text-sm text-slate-500">Entre l’Agency ID reçu (pas de clé).</p>
 
-      <div className="p-5 space-y-3">
+      {msg && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+          {msg}
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col md:flex-row gap-3">
         <input
-          className="w-full rounded-xl border border-slate-200 px-3 py-2"
+          className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+          placeholder="Agency ID (uuid)"
           value={agencyId}
           onChange={(e) => setAgencyId(e.target.value)}
-          placeholder="Agency ID (uuid)"
-          autoComplete="off"
+          disabled={disabled || loading}
         />
-
         <button
           type="button"
-          disabled={busy || !agencyId.trim()}
-          onClick={() => onJoinByAgencyId(agencyId.trim())}
-          className={cn(
-            "w-full rounded-xl px-4 py-2 text-sm font-semibold",
-            busy || !agencyId.trim()
-              ? "bg-slate-200 text-slate-500"
-              : "bg-slate-900 text-white hover:bg-slate-800"
-          )}
+          onClick={join}
+          disabled={disabled || loading}
+          className={[
+            "rounded-xl px-4 py-2 text-sm font-semibold",
+            loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800",
+          ].join(" ")}
         >
-          {busy ? "Connexion..." : "Rejoindre"}
+          {loading ? "..." : "Rejoindre"}
         </button>
-
-        <p className="text-xs text-slate-500">
-          Exemple: <span className="font-mono">244687c8-fafe-40ff-812d-a5c43e54aa0b</span>
-        </p>
       </div>
-    </section>
+    </div>
   );
 }
