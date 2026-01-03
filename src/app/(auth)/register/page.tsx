@@ -26,16 +26,20 @@ export default function RegisterPage() {
     try {
       const code = joinCode.trim();
 
-      // ✅ Stocker la clé pour l’utiliser après confirmation email (dans /callback)
+      // ✅ Backup (optionnel) : utile si metadata échoue (rare)
       if (code) localStorage.setItem("join_code", code);
       else localStorage.removeItem("join_code");
 
-      // 1) SIGN UP — redirection email vers /callback
+      // ✅ SIGN UP — redirection email vers /callback
+      // ✅ On stocke join_code dans user_metadata pour que /callback puisse le lire
       const { error: signErr } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
-          data: { full_name: fullName.trim() },
+          data: {
+            full_name: fullName.trim(),
+            join_code: code || null, // ✅ IMPORTANT
+          },
           emailRedirectTo: "https://www.jadoline.com/callback",
         },
       });
@@ -53,16 +57,14 @@ export default function RegisterPage() {
         throw signErr;
       }
 
-      // 2) Si confirmation email activée → pas de session immédiate
+      // ✅ Si confirmation email activée → pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
-        setMsg(
-          "Compte créé avec succès ✅ Veuillez vérifier votre email pour confirmer votre compte."
-        );
+        setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      // 3) Si session existe (cas rare si email confirmation off), rejoindre via clé
+      // ✅ Si confirmation email OFF (rare), on peut rejoindre direct si code
       if (code) {
         const { data: res, error: joinErr } = await supabase.rpc("join_with_code", {
           p_code: code,
@@ -73,26 +75,16 @@ export default function RegisterPage() {
           return;
         }
 
+        // Nettoyage
         localStorage.removeItem("join_code");
+        await supabase.auth.updateUser({ data: { join_code: null } });
+
         router.push(res.type === "FITNESS" ? "/dashboard/gym" : "/dashboard");
         return;
       }
 
-      // 4) Créer une agence par défaut si pas de clé
-      const defaultAgencyName = `Agence de ${fullName.trim() || "Nouveau compte"}`;
-
-      const { error: createErr } = await supabase.rpc("create_default_agency", {
-        p_name: defaultAgencyName,
-      });
-
-      // Si email confirmation ON: souvent on arrive ici sans session → ok
-      if (createErr) {
-        setMsg(
-          "Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte."
-        );
-        return;
-      }
-
+      // ✅ IMPORTANT : on NE crée PAS d’agence ici.
+      // Ton trigger SQL sur auth.users le fait automatiquement (agence + clé + membership).
       router.push("/dashboard");
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
@@ -166,11 +158,7 @@ export default function RegisterPage() {
             </div>
 
             <button className="btn-primary w-full" disabled={loading}>
-              {loading
-                ? "Création..."
-                : hasCode
-                ? "Rejoindre avec la clé"
-                : "Créer votre compte"}
+              {loading ? "Création..." : hasCode ? "Rejoindre avec la clé" : "Créer votre compte"}
             </button>
           </form>
 
