@@ -31,6 +31,7 @@ export default function ProfilePage() {
   const supabase = createClient();
   const router = useRouter();
 
+  // ✅ 3 tabs: Mes infos / Mon agence / Work (collaborations)
   const [tab, setTab] = useState<"infos" | "mon_agence" | "work">("infos");
 
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,7 @@ export default function ProfilePage() {
 
   const [email, setEmail] = useState("");
   const [emailConfirmed, setEmailConfirmed] = useState(false);
+
   const [profile, setProfile] = useState<ProfileRow | null>(null);
 
   // agence perso + clé unique
@@ -53,13 +55,7 @@ export default function ProfilePage() {
   // Work collaborations
   const [workMemberships, setWorkMemberships] = useState<MembershipRow[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string | null>(null);
-
   const [managedClients, setManagedClients] = useState<ClientRow[]>([]);
-
-  const isOwnerOfMyAgency = useMemo(() => {
-    // sur agence perso, oui (owner_id = auth.uid), mais on sécurise côté SQL aussi.
-    return true;
-  }, []);
 
   const selectedAgencyName = useMemo(() => {
     const m = workMemberships.find((x) => x.agency_id === selectedAgencyId) || null;
@@ -67,7 +63,9 @@ export default function ProfilePage() {
     return a?.name ?? "—";
   }, [workMemberships, selectedAgencyId]);
 
-  // ---------------- LOAD BASE ----------------
+  // =============================
+  // LOAD BASE
+  // =============================
   useEffect(() => {
     let mounted = true;
 
@@ -89,15 +87,15 @@ export default function ProfilePage() {
       setEmail(user.email ?? "");
       setEmailConfirmed(!!(user as any).email_confirmed_at);
 
-      // assure agence perso + clé active
+      // ✅ assure agence perso + clé active (fonction SQL)
       try {
         await supabase.rpc("ensure_personal_agency");
       } catch {}
 
-      // users_profile
+      // ✅ users_profile (colonnes existantes dans ton schéma)
       const { data: prof, error: profErr } = await supabase
         .from("users_profile")
-        .select("user_id, full_name, role, created_at, avatar_url, agency_id")
+        .select("user_id, full_name, role, created_at, avatar_url")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -117,7 +115,7 @@ export default function ProfilePage() {
         avatar_url: prof.avatar_url ?? null,
       });
 
-      // agence perso
+      // ✅ agence perso = agencies.owner_id = user.id
       const { data: agency, error: aErr } = await supabase
         .from("agencies")
         .select("id, name, archived_at")
@@ -134,7 +132,7 @@ export default function ProfilePage() {
 
       setMyAgency(agency as any);
 
-      // clé unique active
+      // ✅ clé unique active
       const { data: key, error: kErr } = await supabase
         .from("agency_keys")
         .select("id, key, active, created_at, agency_id")
@@ -146,7 +144,7 @@ export default function ProfilePage() {
 
       if (!kErr) setMyKey((key as any) ?? null);
 
-      // Work memberships (collaboration) = role != OWNER
+      // ✅ Work memberships (collaborations): role != OWNER
       const { data: mems, error: memErr } = await supabase
         .from("agency_members")
         .select("id, agency_id, user_id, role, status, agencies(id, name, archived_at)")
@@ -164,8 +162,6 @@ export default function ProfilePage() {
 
       const memRows = (mems ?? []) as MembershipRow[];
       setWorkMemberships(memRows);
-
-      // sélectionner 1 agence work par défaut
       setSelectedAgencyId(memRows[0]?.agency_id ?? null);
 
       setLoading(false);
@@ -177,14 +173,15 @@ export default function ProfilePage() {
     };
   }, [router, supabase]);
 
-  // ---------------- LOAD MON AGENCE MEMBERS + CLIENT ACCESS ----------------
+  // =============================
+  // LOAD MON AGENCE (membres + accès clients + clients)
+  // =============================
   useEffect(() => {
     let mounted = true;
 
     async function loadMyAgencyData() {
       if (!myAgency?.id) return;
 
-      // membres de mon agence (join users_profile)
       const { data: members, error: mErr } = await supabase
         .from("agency_members")
         .select("user_id, role, status, users_profile(full_name, avatar_url)")
@@ -199,7 +196,6 @@ export default function ProfilePage() {
 
       setMyMembers((members ?? []) as any);
 
-      // access client de mon agence (tous)
       const { data: access, error: aErr } = await supabase
         .from("member_client_access")
         .select("user_id, client_id")
@@ -208,7 +204,6 @@ export default function ProfilePage() {
       if (!mounted) return;
 
       if (aErr) {
-        // pas bloquant
         setMyAccess([]);
         setMyClients([]);
         return;
@@ -239,7 +234,9 @@ export default function ProfilePage() {
     };
   }, [myAgency?.id, supabase]);
 
-  // ---------------- LOAD CLIENTS I MANAGE IN SELECTED WORK AGENCY ----------------
+  // =============================
+  // LOAD WORK -> clients que je gère dans l’agence sélectionnée
+  // =============================
   useEffect(() => {
     let mounted = true;
 
@@ -254,7 +251,6 @@ export default function ProfilePage() {
         .eq("agency_id", selectedAgencyId);
 
       if (!mounted) return;
-
       if (aErr) return;
 
       const ids = (access ?? []).map((x: any) => x.client_id).filter(Boolean);
@@ -269,7 +265,6 @@ export default function ProfilePage() {
         .in("id", ids);
 
       if (!mounted) return;
-
       if (!cErr) setManagedClients((clients ?? []) as any);
     }
 
@@ -279,7 +274,9 @@ export default function ProfilePage() {
     };
   }, [profile, selectedAgencyId, supabase]);
 
-  // ---------------- ACTIONS ----------------
+  // =============================
+  // ACTIONS
+  // =============================
   async function onSaveName(newName: string) {
     if (!profile) return;
     setBusy(true);
@@ -320,67 +317,16 @@ export default function ProfilePage() {
     if (!res?.ok) return setMsg("Clé invalide ❌");
 
     setMsg("✅ Rejoint avec succès.");
-    // reload simple
     location.reload();
   }
 
-  // Work select
   async function onSelectWorkAgency(agencyId: string) {
     setSelectedAgencyId(agencyId);
-  }
-
-  // Mon agence actions
-  async function disableMember(memberUserId: string) {
-    if (!myAgency?.id) return;
-    setBusy(true);
-    setMsg(null);
-
-    const { data, error } = await supabase.rpc("disable_agency_member", {
-      p_agency_id: myAgency.id,
-      p_user_id: memberUserId,
-    });
-
-    setBusy(false);
-    if (error || !data?.ok) throw error ?? new Error("disable_failed");
-    // refresh
-    await refreshMyAgency();
-  }
-
-  async function enableMember(memberUserId: string) {
-    if (!myAgency?.id) return;
-    setBusy(true);
-    setMsg(null);
-
-    const { data, error } = await supabase.rpc("enable_agency_member", {
-      p_agency_id: myAgency.id,
-      p_user_id: memberUserId,
-    });
-
-    setBusy(false);
-    if (error || !data?.ok) throw error ?? new Error("enable_failed");
-    await refreshMyAgency();
-  }
-
-  async function revokeClientAccess(memberUserId: string, clientId: string) {
-    if (!myAgency?.id) return;
-    setBusy(true);
-    setMsg(null);
-
-    const { data, error } = await supabase.rpc("revoke_client_access", {
-      p_agency_id: myAgency.id,
-      p_user_id: memberUserId,
-      p_client_id: clientId,
-    });
-
-    setBusy(false);
-    if (error || !data?.ok) throw error ?? new Error("revoke_failed");
-    await refreshMyAgency();
   }
 
   async function refreshMyAgency() {
     if (!myAgency?.id) return;
 
-    // members
     const { data: members } = await supabase
       .from("agency_members")
       .select("user_id, role, status, users_profile(full_name, avatar_url)")
@@ -388,7 +334,6 @@ export default function ProfilePage() {
 
     setMyMembers((members ?? []) as any);
 
-    // access
     const { data: access } = await supabase
       .from("member_client_access")
       .select("user_id, client_id")
@@ -411,7 +356,56 @@ export default function ProfilePage() {
     setMyClients((clients ?? []) as any);
   }
 
-  // no-op for WorkspaceCard
+  async function disableMember(memberUserId: string) {
+    if (!myAgency?.id) return;
+    setBusy(true);
+    setMsg(null);
+
+    const { data, error } = await supabase.rpc("disable_agency_member", {
+      p_agency_id: myAgency.id,
+      p_user_id: memberUserId,
+    });
+
+    setBusy(false);
+
+    if (error || !data?.ok) throw error ?? new Error("disable_failed");
+    await refreshMyAgency();
+  }
+
+  async function enableMember(memberUserId: string) {
+    if (!myAgency?.id) return;
+    setBusy(true);
+    setMsg(null);
+
+    const { data, error } = await supabase.rpc("enable_agency_member", {
+      p_agency_id: myAgency.id,
+      p_user_id: memberUserId,
+    });
+
+    setBusy(false);
+
+    if (error || !data?.ok) throw error ?? new Error("enable_failed");
+    await refreshMyAgency();
+  }
+
+  async function revokeClientAccess(memberUserId: string, clientId: string) {
+    if (!myAgency?.id) return;
+    setBusy(true);
+    setMsg(null);
+
+    const { data, error } = await supabase.rpc("revoke_client_access", {
+      p_agency_id: myAgency.id,
+      p_user_id: memberUserId,
+      p_client_id: clientId,
+    });
+
+    setBusy(false);
+
+    if (error || !data?.ok) throw error ?? new Error("revoke_failed");
+    await refreshMyAgency();
+  }
+
+  // WorkspaceCard: no key generation + no archive
   async function onGenerateKeyNoop() {
     setMsg("Clé unique (pas de régénération).");
   }
@@ -427,7 +421,9 @@ export default function ProfilePage() {
     }
   }
 
-  // ---------------- UI ----------------
+  // =============================
+  // UI
+  // =============================
   if (loading) {
     return (
       <div className="p-8">
@@ -450,16 +446,11 @@ export default function ProfilePage() {
 
   return (
     <div className="p-6 md:p-8 space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Profil</h1>
-          <p className="text-sm text-slate-500">
-            Mes informations, mon équipe, et collaborations.
-          </p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold">Profil</h1>
+        <p className="text-sm text-slate-500">Mes infos, mon équipe, et collaborations.</p>
       </div>
 
-      {/* Tabs */}
       <div className="flex flex-wrap gap-2">
         <button
           className={cn(
@@ -498,7 +489,7 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* ---------------- Mes infos ---------------- */}
+      {/* ================= Mes infos ================= */}
       {tab === "infos" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -510,10 +501,9 @@ export default function ProfilePage() {
               onSaveName={onSaveName}
             />
 
-            {/* Clé unique + rejoindre */}
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="p-5 border-b border-slate-100">
-                <h2 className="text-lg font-semibold">Clé unique</h2>
+                <h2 className="text-lg font-semibold">Ma clé (unique)</h2>
                 <p className="text-sm text-slate-500">
                   Partage cette clé pour que les collaborateurs rejoignent ton agence.
                 </p>
@@ -539,20 +529,18 @@ export default function ProfilePage() {
                       disabled={!myKey?.key}
                       className={cn(
                         "rounded-xl border px-4 py-2 text-sm font-medium",
-                        !myKey?.key
-                          ? "opacity-60 cursor-not-allowed"
-                          : "hover:bg-slate-50"
+                        !myKey?.key ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50"
                       )}
                     >
                       Copier
                     </button>
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">Pas de régénération : 1 clé unique.</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Pas de régénération : 1 seule clé unique.
+                  </p>
                 </div>
 
-                <div className="pt-2">
-                  <JoinAgencyCard busy={busy} onJoin={onJoin} />
-                </div>
+                <JoinAgencyCard busy={busy} onJoin={onJoin} />
               </div>
             </section>
           </div>
@@ -563,7 +551,7 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* ---------------- Mon agence ---------------- */}
+      {/* ================= Mon agence ================= */}
       {tab === "mon_agence" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -573,7 +561,7 @@ export default function ProfilePage() {
               access={myAccess}
               clients={myClients}
               busy={busy}
-              isOwner={isOwnerOfMyAgency}
+              isOwner={true}
               onDisableMember={disableMember}
               onEnableMember={enableMember}
               onRevokeClientAccess={revokeClientAccess}
@@ -587,7 +575,7 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* ---------------- Work collaborations ---------------- */}
+      {/* ================= Work (collaborations) ================= */}
       {tab === "work" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -595,7 +583,7 @@ export default function ProfilePage() {
               memberships={workMemberships}
               selectedAgencyId={selectedAgencyId}
               onSelectAgency={onSelectWorkAgency}
-              members={[]} // on cache members ici (pas besoin)
+              members={[]}
               isOwner={false}
               agencyKey={null}
               onGenerateKey={onGenerateKeyNoop}
@@ -604,10 +592,9 @@ export default function ProfilePage() {
               busy={busy}
             />
 
-            {/* Détails + clients que je gère */}
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="p-5 border-b border-slate-100">
-                <h2 className="text-lg font-semibold">Mes clients (dans l’agence sélectionnée)</h2>
+                <h2 className="text-lg font-semibold">Mes clients (agence sélectionnée)</h2>
                 <p className="text-sm text-slate-500">
                   Les clients auxquels tu as accès dans cette collaboration.
                 </p>
