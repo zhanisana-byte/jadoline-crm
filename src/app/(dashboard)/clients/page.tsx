@@ -1,24 +1,30 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 import { PhoneInput } from "react-international-phone";
 import "react-international-phone/style.css";
 
+import { SocialAccountsInline } from "@/components/clients/SocialAccountsInline";
+
 type ClientRow = {
   id: string;
   name: string;
   phone: string | null;
+  phones: string[] | null;
   logo_url: string | null;
   brief_avoid: string | null;
   created_at: string | null;
 };
 
+type SocialDraft = {
+  platform: "META_FACEBOOK_PAGE" | "META_INSTAGRAM" | "TIKTOK" | "YOUTUBE";
+  value: string;
+};
+
 export default function ClientsPage() {
   const supabase = createClient();
-  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -32,9 +38,12 @@ export default function ClientsPage() {
 
   // ---- Form states ----
   const [name, setName] = useState("");
-  const [phoneE164, setPhoneE164] = useState(""); // stocke directement +XXX...
+  const [phones, setPhones] = useState<string[]>([""]); // ✅ multi phones
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+
+  // RS drafts (manuel)
+  const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([]);
 
   const avoidPreview = useMemo(() => {
     const others = clients
@@ -85,7 +94,7 @@ export default function ClientsPage() {
 
     const { data: rows, error: cErr } = await supabase
       .from("clients")
-      .select("id, name, phone, logo_url, brief_avoid, created_at")
+      .select("id, name, phone, phones, logo_url, brief_avoid, created_at")
       .eq("agency_id", agid)
       .order("created_at", { ascending: false });
 
@@ -106,8 +115,9 @@ export default function ClientsPage() {
 
   function resetForm() {
     setName("");
-    setPhoneE164("");
+    setPhones([""]);
     setLogoFile(null);
+    setSocialDrafts([]);
     setOk(null);
     setError(null);
   }
@@ -117,6 +127,18 @@ export default function ClientsPage() {
     if (!p.startsWith("+")) return false;
     const digits = p.replace(/[^\d]/g, "");
     return digits.length >= 8 && digits.length <= 15;
+  }
+
+  function addPhone() {
+    setPhones((prev) => [...prev, ""]);
+  }
+
+  function updatePhone(i: number, val: string) {
+    setPhones((prev) => prev.map((p, idx) => (idx === i ? val : p)));
+  }
+
+  function removePhone(i: number) {
+    setPhones((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   async function uploadClientLogo(params: {
@@ -135,11 +157,7 @@ export default function ClientsPage() {
 
     const { error: upErr } = await supabase.storage
       .from("client-logos")
-      .upload(path, file, {
-        upsert: true,
-        contentType: file.type,
-        cacheControl: "3600",
-      });
+      .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
 
     if (upErr) throw upErr;
 
@@ -172,24 +190,31 @@ export default function ClientsPage() {
       return;
     }
 
-    const cleanPhone = phoneE164.trim();
-    if (!isValidE164(cleanPhone)) {
-      setError("Téléphone invalide. Exemple: +21620121521");
+    const cleanPhones = phones.map((p) => p.trim()).filter(Boolean);
+    if (cleanPhones.length === 0) {
+      setError("Au moins 1 téléphone est obligatoire.");
+      return;
+    }
+    const bad = cleanPhones.find((p) => !isValidE164(p));
+    if (bad) {
+      setError(`Téléphone invalide: ${bad} (ex: +21620121521)`);
       return;
     }
 
     setSaving(true);
 
     try {
+      // 1) Create client (phone principal + phones[])
       const { data: client, error: cErr } = await supabase
         .from("clients")
         .insert({
           agency_id: agencyId,
           name: cleanName,
-          phone: cleanPhone,
+          phone: cleanPhones[0], // principal
+          phones: cleanPhones,   // ✅ multi
           created_by: userId,
         })
-        .select("id, name")
+        .select("id")
         .single();
 
       if (cErr) throw cErr;
@@ -197,16 +222,34 @@ export default function ClientsPage() {
 
       const clientId = client.id as string;
 
+      // 2) Logo optionnel
       if (logoFile) {
         await uploadClientLogo({ agencyId, clientId, file: logoFile });
       }
 
-      setOk("✅ Client créé avec succès.");
+      // 3) Insert RS drafts -> client_social_accounts (pas client_platforms)
+      const rows = socialDrafts
+        .map((d) => ({ platform: d.platform, value: d.value.trim() }))
+        .filter((d) => d.value.length > 0)
+        .map((d) => ({
+          client_id: clientId,
+          platform: d.platform,
+          publish_mode: "ASSISTED",
+          display_name: d.value,
+          username:
+            d.platform === "META_INSTAGRAM" || d.platform === "TIKTOK"
+              ? d.value.replace(/^@/, "")
+              : null,
+        }));
+
+      if (rows.length > 0) {
+        const { error: sErr } = await supabase.from("client_social_accounts").insert(rows);
+        if (sErr) throw sErr;
+      }
+
+      setOk("✅ Client + réseaux enregistrés.");
       await loadContextAndClients();
       resetForm();
-
-      // Option: ouvrir direct la page réseaux
-      // router.push(`/dashboard/clients/${clientId}/socials`);
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
     } finally {
@@ -220,7 +263,7 @@ export default function ClientsPage() {
         <div>
           <h1 style={{ margin: 0 }}>Clients</h1>
           <p style={{ margin: "6px 0 0", color: "#64748b" }}>
-            Création client: Nom + Téléphone + Logo (optionnel). Les réseaux sont gérés dans la fiche “Réseaux”.
+            Création client: Nom + Téléphones (multi) + Logo (optionnel) + Réseaux (manuel)
           </p>
         </div>
         <button onClick={() => loadContextAndClients()} disabled={loading} style={secondaryBtn}>
@@ -231,38 +274,62 @@ export default function ClientsPage() {
       {error ? <Alert type="error" text={error} /> : null}
       {ok ? <Alert type="ok" text={ok} /> : null}
 
-      {/* Create Card */}
-      <Card title="Créer un client">
+      <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", background: "white" }}>
+        <h2 style={{ margin: 0 }}>Créer un client</h2>
+
+        {/* Preview brief_avoid */}
         <div style={{ marginTop: 10, padding: 12, borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Texte à éviter (auto)</div>
           <div style={{ color: "#475569", fontSize: 13 }}>
             {avoidPreview ? avoidPreview : "Aucun autre client pour le moment."}
           </div>
-          <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>
-            ⚙️ Géré automatiquement par le trigger SQL.
-          </div>
+          <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>⚙️ Trigger SQL.</div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-          <div>
-            <label style={labelStyle}>Nom client *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: BBGym" style={inputStyle} />
+        <div style={{ marginTop: 14 }}>
+          <label style={labelStyle}>Nom client *</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: BBGym" style={inputStyle} />
+        </div>
+
+        {/* Multi phones */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <label style={labelStyle}>Téléphones (multi) *</label>
+            <button type="button" onClick={addPhone} style={secondaryBtn}>
+              + Ajouter numéro
+            </button>
           </div>
 
-          <div>
-            <label style={labelStyle}>Téléphone (tous pays) *</label>
-            <div style={{ marginTop: 8 }}>
-              <PhoneInput
-                defaultCountry="tn"
-                value={phoneE164}
-                onChange={(val) => setPhoneE164(val)}
-                inputStyle={{ width: "100%", borderRadius: 12, border: "1px solid #e2e8f0", padding: "10px 12px" }}
-                countrySelectorStyleProps={{ buttonStyle: { borderRadius: 12, border: "1px solid #e2e8f0" } }}
-              />
-            </div>
-            <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
-              Format stocké: <b>{phoneE164 || "—"}</b>
-            </div>
+          <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+            {phones.map((p, idx) => (
+              <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 48px", gap: 10, alignItems: "center" }}>
+                <PhoneInput
+                  defaultCountry="tn"
+                  value={p}
+                  onChange={(val) => updatePhone(idx, val)}
+                  inputStyle={{ width: "100%", borderRadius: 12, border: "1px solid #e2e8f0", padding: "10px 12px" }}
+                  countrySelectorStyleProps={{ buttonStyle: { borderRadius: 12, border: "1px solid #e2e8f0" } }}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => removePhone(idx)}
+                  disabled={phones.length === 1}
+                  title="Supprimer"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    border: "1px solid #fee2e2",
+                    background: phones.length === 1 ? "#f8fafc" : "#fff1f2",
+                    color: "#b91c1c",
+                    cursor: phones.length === 1 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -281,6 +348,9 @@ export default function ClientsPage() {
           </div>
         </div>
 
+        {/* ✅ RS inline (component séparé) */}
+        <SocialAccountsInline onChange={setSocialDrafts} />
+
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
           <button onClick={onCreateClient} disabled={saving || loading} style={primaryBtn}>
             {saving ? "Création..." : "Créer le client"}
@@ -289,57 +359,7 @@ export default function ClientsPage() {
             Reset
           </button>
         </div>
-      </Card>
-
-      {/* List */}
-      <Card title="Liste des clients">
-        {loading ? (
-          <div style={{ marginTop: 10, color: "#64748b" }}>Chargement...</div>
-        ) : clients.length === 0 ? (
-          <div style={{ marginTop: 10, color: "#94a3b8" }}>Aucun client pour le moment.</div>
-        ) : (
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            {clients.map((c) => (
-              <div key={c.id} style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 12, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  {c.logo_url ? (
-                    <img src={c.logo_url} alt={c.name} style={{ width: 48, height: 48, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }} />
-                  ) : (
-                    <div style={{ width: 48, height: 48, borderRadius: 14, border: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
-                      —
-                    </div>
-                  )}
-
-                  <div>
-                    <div style={{ fontWeight: 800 }}>{c.name}</div>
-                    <div style={{ color: "#64748b", fontSize: 13 }}>{c.phone || "—"}</div>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div style={{ maxWidth: 420, textAlign: "right" }}>
-                    <div style={{ color: "#94a3b8", fontSize: 12 }}>Texte à éviter (auto)</div>
-                    <div style={{ color: "#475569", fontSize: 13 }}>{c.brief_avoid ? c.brief_avoid : "—"}</div>
-                  </div>
-
-                  <button type="button" onClick={() => router.push(`/dashboard/clients/${c.id}/socials`)} style={secondaryBtn}>
-                    🌐 Réseaux
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", background: "white" }}>
-      <h2 style={{ margin: 0 }}>{title}</h2>
-      {children}
+      </div>
     </div>
   );
 }
@@ -349,7 +369,6 @@ function Alert({ type, text }: { type: "error" | "ok"; text: string }) {
     type === "error"
       ? { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b" }
       : { background: "#ecfdf5", border: "1px solid #bbf7d0", color: "#065f46" };
-
   return <div style={{ marginTop: 14, padding: 12, borderRadius: 12, ...style }}>{text}</div>;
 }
 
