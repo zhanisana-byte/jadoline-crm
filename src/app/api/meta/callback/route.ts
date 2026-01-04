@@ -2,21 +2,30 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-function safeJson(text: string) {
-  try { return JSON.parse(text); } catch { return null; }
+const COOKIE_NAME = "meta_oauth_state";
+
+function sign(secret: string, base: string) {
+  return crypto.createHmac("sha256", secret).update(base).digest("base64url");
 }
 
-function verifyState(state: string, secret: string) {
-  const [body, sig] = state.split(".");
-  if (!body || !sig) return null;
+function parseState(state: string, secret: string) {
+  const [base, sig] = state.split(".");
+  if (!base || !sig) return null;
+  if (sign(secret, base) !== sig) return null;
+  return JSON.parse(Buffer.from(base, "base64url").toString("utf8")) as {
+    client_id: string;
+    nonce: string;
+    ts: number;
+  };
+}
 
-  const expected = crypto.createHmac("sha256", secret).update(body).digest("base64")
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-
-  if (expected !== sig) return null;
-
-  const payload = safeJson(Buffer.from(body.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
-  return payload;
+async function graphGet(path: string, accessToken: string) {
+  const u = new URL(`https://graph.facebook.com/v19.0/${path}`);
+  u.searchParams.set("access_token", accessToken);
+  const r = await fetch(u.toString(), { method: "GET" });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j?.error?.message || "Graph error");
+  return j;
 }
 
 export async function GET(req: Request) {
@@ -24,9 +33,7 @@ export async function GET(req: Request) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
-  if (!code || !state) {
-    return NextResponse.json({ error: "missing code/state" }, { status: 400 });
-  }
+  if (!code || !state) return NextResponse.json({ error: "missing code/state" }, { status: 400 });
 
   const appId = process.env.META_APP_ID!;
   const appSecret = process.env.META_APP_SECRET!;
@@ -34,79 +41,75 @@ export async function GET(req: Request) {
   const stateSecret = process.env.META_STATE_SECRET!;
 
   if (!appId || !appSecret || !redirectUri || !stateSecret) {
-    return NextResponse.json({ error: "missing env" }, { status: 500 });
+    return NextResponse.json({ error: "missing META env" }, { status: 500 });
   }
 
-  const payload = verifyState(state, stateSecret);
-  if (!payload?.client_id) {
-    return NextResponse.json({ error: "invalid_state" }, { status: 400 });
+  // cookie anti-CSRF
+  const cookieHeader = req.headers.get("cookie") || "";
+  const cookieState = cookieHeader.match(new RegExp(`${COOKIE_NAME}=([^;]+)`))?.[1];
+  if (!cookieState || cookieState !== state) {
+    return NextResponse.redirect("https://jadoline.com/clients?meta=failed");
   }
 
-  // 1) Exchange code -> access_token
-  const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
-  tokenUrl.searchParams.set("client_id", appId);
-  tokenUrl.searchParams.set("redirect_uri", redirectUri);
-  tokenUrl.searchParams.set("client_secret", appSecret);
-  tokenUrl.searchParams.set("code", code);
+  const parsed = parseState(state, stateSecret);
+  if (!parsed?.client_id) {
+    return NextResponse.redirect("https://jadoline.com/clients?meta=failed");
+  }
 
-  const tokenRes = await fetch(tokenUrl.toString(), { method: "GET" });
-  const tokenText = await tokenRes.text();
-  const tokenJson = safeJson(tokenText);
+  try {
+    // exchange code -> user access token
+    const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
+    tokenUrl.searchParams.set("client_id", appId);
+    tokenUrl.searchParams.set("redirect_uri", redirectUri);
+    tokenUrl.searchParams.set("client_secret", appSecret);
+    tokenUrl.searchParams.set("code", code);
 
-  if (!tokenRes.ok || !tokenJson?.access_token) {
-    return NextResponse.json(
-      { error: "token_exchange_failed", details: tokenJson ?? tokenText },
-      { status: 400 }
+    const tokenRes = await fetch(tokenUrl.toString(), { method: "GET" });
+    const tokenJson = await tokenRes.json();
+    if (!tokenRes.ok || !tokenJson?.access_token) throw new Error("token_exchange_failed");
+
+    const userAccessToken = tokenJson.access_token as string;
+    const expiresIn = typeof tokenJson.expires_in === "number" ? tokenJson.expires_in : null;
+    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+
+    // pages
+    const pages = await graphGet("me/accounts?fields=id,name,access_token", userAccessToken);
+    const page = pages?.data?.[0];
+
+    if (!page?.id || !page?.access_token) {
+      throw new Error("no_page_found");
+    }
+
+    // ig business account (si existe)
+    const pageInfo = await graphGet(`${page.id}?fields=instagram_business_account,name`, page.access_token);
+    const igId = pageInfo?.instagram_business_account?.id ?? null;
+
+    // ✅ save in DB via service role
+    const sb = createAdminClient();
+    const { error: upErr } = await sb
+      .from("meta_connections")
+      .upsert(
+        {
+          client_id: parsed.client_id,
+          access_token: userAccessToken,
+          expires_at: expiresAt,
+          updated_at: new Date().toISOString(),
+          // champs optionnels si tu veux les garder:
+          fb_page_id: String(page.id),
+          fb_page_name: String(page.name ?? ""),
+          ig_business_id: igId ? String(igId) : null,
+        },
+        { onConflict: "client_id" }
+      );
+
+    if (upErr) throw upErr;
+
+    const res = NextResponse.redirect(
+      `https://jadoline.com/clients?meta=connected&client_id=${parsed.client_id}`
     );
+    res.cookies.set(COOKIE_NAME, "", { path: "/", maxAge: 0 });
+    return res;
+  } catch {
+    return NextResponse.redirect("https://jadoline.com/clients?meta=failed");
   }
-
-  const accessToken = tokenJson.access_token as string;
-  const expiresIn = typeof tokenJson.expires_in === "number" ? tokenJson.expires_in : null;
-
-  // 2) (Optionnel mais utile) récupérer infos user + scopes
-  const debugUrl = new URL("https://graph.facebook.com/v19.0/debug_token");
-  debugUrl.searchParams.set("input_token", accessToken);
-  debugUrl.searchParams.set("access_token", `${appId}|${appSecret}`);
-
-  const dbgRes = await fetch(debugUrl.toString());
-  const dbgJson = safeJson(await dbgRes.text());
-
-  const fbUserId = dbgJson?.data?.user_id ?? null;
-  const scopes = dbgJson?.data?.scopes ?? null;
-
-  // 3) Save to Supabase (service role => pas de RLS block)
-  const supabase = createAdminClient();
-
-  const expiresAt =
-    expiresIn && expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
-
-  // IMPORTANT : adapte les noms des colonnes si ton table est différent
-  const { error: dbErr } = await supabase
-    .from("meta_connections")
-    .upsert(
-      {
-        client_id: payload.client_id,
-        provider: "META",
-        access_token: accessToken,
-        fb_user_id: fbUserId,
-        scopes,
-        expires_at: expiresAt,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "client_id,provider" }
-    );
-
-  if (dbErr) {
-    return NextResponse.json(
-      { error: "db_save_failed", details: dbErr },
-      { status: 500 }
-    );
-  }
-
-  // 4) Redirect back UI
-  const redirectBack = new URL("https://jadoline.com/clients");
-  redirectBack.searchParams.set("meta", "connected");
-  redirectBack.searchParams.set("client_id", payload.client_id);
-
-  return NextResponse.redirect(redirectBack.toString());
 }
