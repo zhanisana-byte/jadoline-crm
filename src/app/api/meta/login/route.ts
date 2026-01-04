@@ -1,36 +1,49 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
+
+function base64url(input: string) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function signState(payload: any, secret: string) {
+  const body = base64url(JSON.stringify(payload));
+  const sig = crypto.createHmac("sha256", secret).update(body).digest("base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return `${body}.${sig}`;
+}
 
 export async function GET(req: Request) {
   const reqUrl = new URL(req.url);
   const clientId = reqUrl.searchParams.get("client_id");
   if (!clientId) return NextResponse.json({ error: "missing client_id" }, { status: 400 });
 
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-  if (!appId) return NextResponse.json({ error: "missing env NEXT_PUBLIC_META_APP_ID" }, { status: 500 });
+  const appId = process.env.META_APP_ID;
+  const redirectUri = process.env.META_REDIRECT_URI; // ex: https://jadoline.com/api/meta/callback
+  const stateSecret = process.env.META_STATE_SECRET;
 
-  // ✅ base URL auto (vercel / prod / localhost)
-  const baseUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-    `${reqUrl.protocol}//${reqUrl.host}`;
+  if (!appId || !redirectUri || !stateSecret) {
+    return NextResponse.json(
+      { error: "missing env", META_APP_ID: !!appId, META_REDIRECT_URI: !!redirectUri, META_STATE_SECRET: !!stateSecret },
+      { status: 500 }
+    );
+  }
 
-  const redirectUri = `${baseUrl}/api/meta/callback`;
+  // ✅ MVP: scope minimal
+  const scopes = "pages_show_list";
 
-  // ✅ scopes SANS espaces
-  const scope = [
-    "pages_show_list",
-    "pages_read_engagement",
-    "pages_manage_metadata",
-    "instagram_basic",
-  ].join(",");
+  const payload = { client_id: clientId, nonce: crypto.randomUUID(), ts: Date.now() };
+  const state = signState(payload, stateSecret);
 
-  const state = Buffer.from(JSON.stringify({ client_id: clientId })).toString("base64url");
+  const oauth = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  oauth.searchParams.set("client_id", appId);
+  oauth.searchParams.set("redirect_uri", redirectUri);
+  oauth.searchParams.set("response_type", "code");
+  oauth.searchParams.set("scope", scopes);
+  oauth.searchParams.set("state", state);
 
-  const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
-  authUrl.searchParams.set("client_id", appId);
-  authUrl.searchParams.set("redirect_uri", redirectUri);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", scope);
-  authUrl.searchParams.set("state", state);
-
-  return NextResponse.redirect(authUrl.toString());
+  return NextResponse.redirect(oauth.toString());
 }
