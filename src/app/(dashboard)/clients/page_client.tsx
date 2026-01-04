@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 import { PhoneInput } from "react-international-phone";
 import "react-international-phone/style.css";
-
-import { SocialAccountsInline } from "@/components/clients/SocialAccountsInline";
 
 type ClientRow = {
   id: string;
@@ -15,18 +13,20 @@ type ClientRow = {
   phone: string | null;
   phones: string[] | null;
   logo_url: string | null;
-  brief_avoid: string | null;
   created_at: string | null;
 };
 
-type SocialDraft = {
-  platform: "META_FACEBOOK_PAGE" | "META_INSTAGRAM" | "TIKTOK" | "YOUTUBE";
-  value: string;
-};
+export default function ClientsPage() {
+  return (
+    <Suspense fallback={<div className="card p-6">Chargement...</div>}>
+      <ClientsInner />
+    </Suspense>
+  );
+}
 
-export default function ClientsPageClient() {
+function ClientsInner() {
   const supabase = createClient();
-  const searchParams = useSearchParams();
+  const sp = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,12 +38,11 @@ export default function ClientsPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // ---- Form states ----
+  // ---- Form ----
   const [name, setName] = useState("");
   const [phones, setPhones] = useState<string[]>([""]);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [socialDrafts, setSocialDrafts] = useState<SocialDraft[]>([]);
 
   const avoidPreview = useMemo(() => {
     const others = clients
@@ -53,15 +52,12 @@ export default function ClientsPageClient() {
     return others.join(", ");
   }, [clients]);
 
-  // ✅ message si retour OAuth meta
   useEffect(() => {
-    const metaConnected = searchParams.get("meta");
-    if (metaConnected === "connected") {
-      setOk("✅ Meta connecté. Tu peux continuer la création du client.");
-      // optionnel: nettoyer l’URL sans refresh
-      // window.history.replaceState({}, "", "/clients");
-    }
-  }, [searchParams]);
+    const meta = sp.get("meta");
+    if (meta === "connected") setOk("✅ Meta connecté avec succès.");
+    if (meta === "failed") setError("❌ Connexion Meta échouée. Réessaie.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!logoFile) {
@@ -72,6 +68,11 @@ export default function ClientsPageClient() {
     setLogoPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [logoFile]);
+
+  useEffect(() => {
+    loadContextAndClients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadContextAndClients() {
     setLoading(true);
@@ -104,7 +105,7 @@ export default function ClientsPageClient() {
 
     const { data: rows, error: cErr } = await supabase
       .from("clients")
-      .select("id, name, phone, phones, logo_url, brief_avoid, created_at")
+      .select("id, name, phone, phones, logo_url, created_at")
       .eq("agency_id", agid)
       .order("created_at", { ascending: false });
 
@@ -118,18 +119,12 @@ export default function ClientsPageClient() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadContextAndClients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   function resetForm() {
     setName("");
     setPhones([""]);
     setLogoFile(null);
-    setSocialDrafts([]);
-    setError(null);
     setOk(null);
+    setError(null);
   }
 
   function isValidE164(p: string) {
@@ -226,26 +221,7 @@ export default function ClientsPageClient() {
         await uploadClientLogo({ agencyId, clientId, file: logoFile });
       }
 
-      const rows = socialDrafts
-        .map((d) => ({ platform: d.platform, value: d.value.trim() }))
-        .filter((d) => d.value.length > 0)
-        .map((d) => ({
-          client_id: clientId,
-          platform: d.platform,
-          publish_mode: "ASSISTED",
-          display_name: d.value,
-          username:
-            d.platform === "META_INSTAGRAM" || d.platform === "TIKTOK"
-              ? d.value.replace(/^@/, "")
-              : null,
-        }));
-
-      if (rows.length > 0) {
-        const { error: sErr } = await supabase.from("client_social_accounts").insert(rows);
-        if (sErr) throw sErr;
-      }
-
-      setOk("✅ Client + réseaux enregistrés.");
+      setOk("✅ Client créé. Maintenant connecte Meta.");
       await loadContextAndClients();
       resetForm();
     } catch (e: any) {
@@ -258,15 +234,15 @@ export default function ClientsPageClient() {
   return (
     <div className="container py-6">
       <div className="page-hero p-5 sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="m-0">Clients</h1>
             <p className="muted mt-1">
-              Création client: Nom + Téléphones (multi) + Logo (optionnel) + Réseaux (manuel)
+              Création client: Nom + Téléphones (multi) + Logo (optionnel). Les réseaux se connectent via OAuth (Meta/TikTok).
             </p>
           </div>
 
-          <button onClick={loadContextAndClients} disabled={loading} className="btn btn-ghost">
+          <button className="btn btn-ghost" onClick={loadContextAndClients} disabled={loading} type="button">
             ↻ Refresh
           </button>
         </div>
@@ -274,75 +250,74 @@ export default function ClientsPageClient() {
         {error ? <Alert type="error" text={error} /> : null}
         {ok ? <Alert type="ok" text={ok} /> : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_.8fr] gap-4 mt-5">
-          {/* Left: create */}
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Create */}
           <div className="card p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between">
               <h2 className="m-0">Créer un client</h2>
               <span className="badge badge-info">MVP</span>
             </div>
 
             <div className="tip-box mt-4">
-              <div className="font-semibold">Texte à éviter (auto)</div>
-              <div className="mt-1 text-slate-700 text-sm">
+              <div className="font-semibold mb-1">Texte à éviter (auto)</div>
+              <div className="text-slate-600 text-sm">
                 {avoidPreview ? avoidPreview : "Aucun autre client pour le moment."}
               </div>
-              <div className="muted mt-1">⚙️ Trigger SQL (plus tard).</div>
+              <div className="text-slate-400 text-xs mt-2">⚙️ Trigger SQL (plus tard).</div>
             </div>
 
             <div className="mt-4">
               <label>Nom client *</label>
-              <input
-                className="input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: BBGym"
-              />
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: BBGym" />
             </div>
 
             <div className="mt-4">
-              <div className="flex items-center justify-between gap-3">
-                <label>Téléphones (multi) *</label>
-                <button type="button" onClick={addPhone} className="btn btn-ghost">
+              <div className="flex items-center justify-between gap-2">
+                <label className="m-0">Téléphones (multi) *</label>
+                <button className="btn btn-ghost" type="button" onClick={addPhone}>
                   + Ajouter numéro
                 </button>
               </div>
 
               <div className="mt-2 grid gap-2">
                 {phones.map((p, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_44px] gap-2 items-center">
+                  <div key={idx} className="grid grid-cols-[1fr_48px] gap-2 items-center">
                     <PhoneInput
                       defaultCountry="tn"
                       value={p}
                       onChange={(val) => updatePhone(idx, val)}
                       inputStyle={{
                         width: "100%",
-                        borderRadius: 12,
-                        border: "1px solid rgba(226,232,240,.9)",
+                        borderRadius: 14,
+                        border: "1px solid rgba(226,232,240,.85)",
                         padding: "10px 12px",
-                        fontSize: 14,
+                        background: "rgba(255,255,255,.85)",
+                        outline: "none",
                       }}
                       countrySelectorStyleProps={{
-                        buttonStyle: { borderRadius: 12, border: "1px solid rgba(226,232,240,.9)" },
+                        buttonStyle: {
+                          borderRadius: 14,
+                          border: "1px solid rgba(226,232,240,.85)",
+                          background: "rgba(255,255,255,.85)",
+                        },
                       }}
                     />
 
                     <button
+                      className="btn btn-ghost"
                       type="button"
                       onClick={() => removePhone(idx)}
                       disabled={phones.length === 1}
-                      className="btn"
+                      title="Supprimer"
                       style={{
                         width: 44,
                         height: 44,
-                        padding: 0,
-                        borderRadius: 12,
+                        justifyContent: "center",
+                        borderRadius: 14,
                         border: "1px solid rgba(254,202,202,.9)",
-                        background: phones.length === 1 ? "rgba(2,6,23,.04)" : "rgba(254,242,242,.9)",
+                        background: phones.length === 1 ? "rgba(2,6,23,.03)" : "rgba(254,226,226,.65)",
                         color: "#b91c1c",
-                        cursor: phones.length === 1 ? "not-allowed" : "pointer",
                       }}
-                      title="Supprimer"
                     >
                       ✕
                     </button>
@@ -355,31 +330,18 @@ export default function ClientsPageClient() {
               <label>Logo (optionnel)</label>
               <div className="mt-2 flex items-center gap-3">
                 <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+
                 {logoPreview ? (
                   <img
                     src={logoPreview}
                     alt="Preview logo"
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 14,
-                      objectFit: "cover",
-                      border: "1px solid rgba(226,232,240,.9)",
-                    }}
+                    className="border border-slate-200 rounded-2xl"
+                    style={{ width: 64, height: 64, objectFit: "cover" }}
                   />
                 ) : (
                   <div
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 14,
-                      border: "1px dashed rgba(148,163,184,.9)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "#94a3b8",
-                      fontSize: 12,
-                    }}
+                    className="border border-dashed border-slate-300 rounded-2xl text-slate-400 flex items-center justify-center"
+                    style={{ width: 64, height: 64 }}
                   >
                     Logo
                   </div>
@@ -387,28 +349,24 @@ export default function ClientsPageClient() {
               </div>
             </div>
 
-            <div className="mt-5">
-              <SocialAccountsInline onChange={setSocialDrafts} />
-            </div>
-
             <div className="mt-5 flex flex-wrap gap-2">
-              <button onClick={onCreateClient} disabled={saving || loading} className="btn btn-primary">
+              <button className="btn btn-primary" onClick={onCreateClient} disabled={saving || loading} type="button">
                 {saving ? "Création..." : "Créer le client"}
               </button>
-              <button onClick={resetForm} disabled={saving} className="btn btn-ghost">
+              <button className="btn btn-ghost" onClick={resetForm} disabled={saving} type="button">
                 Reset
               </button>
             </div>
           </div>
 
-          {/* Right: list */}
+          {/* List */}
           <div className="card p-5 sm:p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between">
               <div>
-                <div className="card-title">Liste clients</div>
+                <h2 className="m-0">Liste clients</h2>
                 <div className="muted mt-1">{clients.length} client(s)</div>
               </div>
-              {agencyId ? <span className="badge badge-success">Agency OK</span> : <span className="badge">—</span>}
+              <span className="badge badge-success">Agency OK</span>
             </div>
 
             <div className="mt-4 grid gap-3">
@@ -418,48 +376,41 @@ export default function ClientsPageClient() {
                 <div className="muted">Aucun client pour le moment.</div>
               ) : (
                 clients.map((c) => (
-                  <div key={c.id} className="rounded-2xl border border-slate-200/70 bg-white/70 p-3">
-                    <div className="flex items-center gap-3">
-                      {c.logo_url ? (
-                        <img
-                          src={c.logo_url}
-                          alt={c.name}
-                          style={{ width: 40, height: 40, borderRadius: 12, objectFit: "cover" }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: 12,
-                            background: "rgba(2,6,23,.04)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "#64748b",
-                            fontSize: 12,
-                          }}
-                        >
-                          {c.name?.slice(0, 2)?.toUpperCase()}
-                        </div>
-                      )}
+                  <div
+                    key={c.id}
+                    className="rounded-2xl border border-slate-200 bg-white/70 p-4 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="rounded-2xl border border-slate-200 bg-white flex items-center justify-center text-slate-600 font-semibold"
+                        style={{ width: 44, height: 44 }}
+                      >
+                        {(c.name?.trim()?.slice(0, 2) || "CL").toUpperCase()}
+                      </div>
 
                       <div className="min-w-0">
-                        <div className="font-semibold text-slate-900 truncate">{c.name}</div>
-                        <div className="muted truncate">
-                          {c.phones?.length ? c.phones.join(" · ") : c.phone ?? "—"}
+                        <div className="font-semibold truncate">{c.name}</div>
+                        <div className="text-sm text-slate-500 truncate">
+                          {c.phone || (c.phones?.[0] ?? "") || "—"}
                         </div>
                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* ✅ Bouton Connexion Meta pour CE client */}
+                      <a className="btn btn-primary" href={`/clients/${c.id}/meta`}>
+                        Connecter Meta
+                      </a>
                     </div>
                   </div>
                 ))
               )}
             </div>
 
-            <div className="mt-4 tip-box">
-              <div className="font-semibold">Étape suivante</div>
-              <div className="mt-1 text-slate-700 text-sm">
-                Après création du client → on branche <b>Meta</b> (FB/IG), puis TikTok module par module.
+            <div className="tip-box mt-5">
+              <div className="font-semibold mb-1">Étape suivante</div>
+              <div>
+                Clique <b>Connecter Meta</b> sur un client → Facebook OAuth → sélection page → Instagram détecté automatiquement.
               </div>
             </div>
           </div>
@@ -470,7 +421,6 @@ export default function ClientsPageClient() {
 }
 
 function Alert({ type, text }: { type: "error" | "ok"; text: string }) {
-  const cls =
-    type === "error" ? "alert alert-error" : "alert alert-success";
-  return <div className={cls}>{text}</div>;
+  if (type === "error") return <div className="alert alert-error">{text}</div>;
+  return <div className="alert alert-success">{text}</div>;
 }
