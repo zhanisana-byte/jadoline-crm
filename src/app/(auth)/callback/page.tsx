@@ -18,6 +18,14 @@ function CallbackInner() {
 
     (async () => {
       try {
+        // ✅ Supabase peut renvoyer des erreurs dans l'URL
+        const oauthError = searchParams.get("error");
+        const oauthErrorDesc = searchParams.get("error_description");
+        if (oauthError || oauthErrorDesc) {
+          router.replace(`/login?error=${encodeURIComponent(oauthError ?? "confirmation")}`);
+          return;
+        }
+
         const code = searchParams.get("code");
         if (!code) {
           router.replace("/login?error=missing_code");
@@ -33,23 +41,26 @@ function CallbackInner() {
 
         // ✅ maintenant on a une session
         setStatus("Préparation du profil...");
-        const { data: u } = await supabase.auth.getUser();
-        const user = u.user;
-        if (!user) {
-          router.replace("/login");
+        const { data: u, error: uErr } = await supabase.auth.getUser();
+        if (uErr || !u?.user) {
+          router.replace("/login?error=session");
           return;
         }
 
+        const user = u.user;
+
         // ✅ auto-join si join_agency_id existe dans user_metadata
-        const joinAgencyId = (user.user_metadata as any)?.join_agency_id as string | null;
+        const joinAgencyId =
+          ((user.user_metadata as any)?.join_agency_id as string | null) ?? null;
 
         if (joinAgencyId) {
           setStatus("Rejoindre l’agence...");
+
           const { error: joinErr } = await supabase.rpc("join_with_agency_id", {
             p_agency_id: joinAgencyId,
           });
 
-          // si erreur : on continue quand même vers profile
+          // ✅ même si join échoue, on n'empêche pas l'accès au profil
           if (!joinErr) {
             // ✅ on nettoie le metadata pour éviter rejoin à chaque login
             await supabase.auth.updateUser({
