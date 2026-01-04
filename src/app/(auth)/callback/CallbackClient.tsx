@@ -5,6 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+function pickRedirect(searchParams: ReturnType<typeof useSearchParams>) {
+  // optionnel: si tu veux supporter ?next=/dashboard
+  const next = searchParams.get("next");
+  if (next && next.startsWith("/")) return next;
+  return "/profile"; // ✅ par défaut
+}
+
 export default function CallbackClient() {
   const supabase = createClient();
   const router = useRouter();
@@ -18,31 +25,39 @@ export default function CallbackClient() {
     ran.current = true;
 
     (async () => {
-      const code = searchParams.get("code");
-      const errorDesc = searchParams.get("error_description");
-      const error = searchParams.get("error");
+      try {
+        const code = searchParams.get("code");
+        const errorDesc = searchParams.get("error_description");
+        const error = searchParams.get("error");
 
-      if (error || errorDesc) {
-        router.replace(`/login?error=${encodeURIComponent(error ?? "confirmation")}`);
-        return;
-      }
+        // 1) si Supabase renvoie une erreur OAuth
+        if (error || errorDesc) {
+          router.replace(`/login?error=${encodeURIComponent(error ?? "confirmation")}`);
+          return;
+        }
 
-      if (!code) {
-        router.replace("/login?error=missing_code");
-        return;
-      }
+        // 2) pas de code -> impossible d'échanger
+        if (!code) {
+          router.replace("/login?error=missing_code");
+          return;
+        }
 
-      setStatus("Validation de la session...");
-      const { error: exErr } = await supabase.auth.exchangeCodeForSession(code);
+        // 3) échange code -> session
+        setStatus("Validation de la session...");
+        const { error: exErr } = await supabase.auth.exchangeCodeForSession(code);
 
-      if (exErr) {
+        if (exErr) {
+          router.replace("/login?error=confirmation");
+          return;
+        }
+
+        // 4) session OK
+        setStatus("Redirection...");
+        const to = pickRedirect(searchParams);
+        router.replace(to);
+      } catch (e) {
         router.replace("/login?error=confirmation");
-        return;
       }
-
-      // ✅ session OK
-      setStatus("Redirection...");
-      router.replace("/profile"); // ou /dashboard si tu veux
     })();
   }, [searchParams, router, supabase]);
 
