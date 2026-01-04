@@ -1,118 +1,89 @@
-"use client";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+export default async function ProfilePage() {
+  const supabase = createSupabaseServer();
 
-import ProfileInfoCard from "@/components/profile/ProfileInfoCard";
-import MonAgencyCard from "@/components/profile/MonAgencyCard";
-import JoinAgencyCard from "@/components/profile/JoinAgencyCard";
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth.user;
+  if (!user) return <div className="container p-6">Non connecté</div>;
 
-function cn(...cls: (string | false | null | undefined)[]) {
-  return cls.filter(Boolean).join(" ");
-}
+  // profil user
+  const { data: profile } = await supabase
+    .from("users_profile")
+    .select("full_name, role, agency_id")
+    .eq("user_id", user.id)
+    .single();
 
-export default function ProfilePage() {
-  const supabase = createClient();
+  const isAdmin = profile?.role === "OWNER" || profile?.role === "ADMIN";
 
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  // clients visibles dans le profil
+  let clientsQuery = supabase
+    .from("clients")
+    .select("id,name,created_by,created_at")
+    .eq("agency_id", profile.agency_id);
 
-  const [profile, setProfile] = useState<{
-    user_id: string;
-    full_name: string | null;
-    agency_id: string | null;
-    role: string | null;
-    created_at: string | null;
-    avatar_url: string | null;
-  } | null>(null);
+  if (!isAdmin) {
+    clientsQuery = clientsQuery.eq("created_by", user.id);
+  }
 
-  const [email, setEmail] = useState<string>("");
+  const { data: clients } = await clientsQuery;
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setErr(null);
+  // visibilité
+  const { data: visibility } = await supabase
+    .from("client_profile_visibility")
+    .select("client_id,show")
+    .eq("user_id", user.id);
 
-      try {
-        const { data: u } = await supabase.auth.getUser();
-        const user = u.user;
-
-        if (!user) {
-          window.location.href = "/login";
-          return;
-        }
-
-        setEmail(user.email ?? "");
-
-        const { data, error } = await supabase
-          .from("users_profile")
-          .select("user_id, full_name, agency_id, role, created_at, avatar_url")
-          .eq("user_id", user.id)
-          .single();
-
-        if (error) throw error;
-        setProfile(data as any);
-      } catch (e: any) {
-        setErr(e?.message ?? "Une erreur est survenue.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  const myAgencyId = useMemo(() => profile?.agency_id ?? null, [profile]);
+  const visibleMap = new Map(
+    (visibility || []).map((v) => [v.client_id, v.show])
+  );
 
   return (
-    <div className="p-6 md:p-10 max-w-6xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Profil</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Vos informations, votre agence et l’adhésion à une agence.
-        </p>
+    <div className="container py-6">
+      <h1>Mon profil</h1>
+
+      <div className="card p-4 mt-4">
+        <div className="font-semibold">{profile.full_name}</div>
+        <div className="text-sm text-slate-500">
+          Rôle : {profile.role}
+        </div>
       </div>
 
-      {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-sm text-slate-600">
-          Chargement…
-        </div>
-      ) : err ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          {err}
-        </div>
-      ) : !profile ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          Profil introuvable.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Colonne principale */}
-          <div className="lg:col-span-2 space-y-6">
-            <ProfileInfoCard profile={profile} email={email} />
+      <div className="card p-4 mt-6">
+        <h2 className="mb-3">Clients visibles dans mon profil</h2>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <JoinAgencyCard />
-              <MonAgencyCard myAgencyId={myAgencyId} />
-            </div>
-          </div>
+        {clients?.length === 0 && (
+          <div className="text-sm text-slate-500">Aucun client</div>
+        )}
 
-          {/* Side */}
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-              <h2 className="text-lg font-semibold">Récap</h2>
-              <ul className="mt-3 space-y-2 text-sm text-slate-700">
-                <li>✅ Vous pouvez rejoindre une agence via son Agency ID</li>
-                <li>✅ Votre Agency ID est copiable</li>
-                <li>✅ La partie “Work” sera gérée dans le dashboard</li>
-              </ul>
-            </div>
+        <div className="grid gap-2">
+          {clients?.map((c) => {
+            const show = visibleMap.get(c.id) !== false;
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Conseil : si vous ne voyez pas votre Agency ID, cela signifie que
-              <code className="mx-1">users_profile.agency_id</code> est vide.
-            </div>
-          </div>
+            return (
+              <div
+                key={c.id}
+                className="flex items-center justify-between border rounded-xl p-3 bg-white"
+              >
+                <div>
+                  <div className="font-semibold">{c.name}</div>
+                  <div className="text-xs text-slate-500">
+                    Créé par {c.created_by === user.id ? "moi" : "CM"}
+                  </div>
+                </div>
+
+                <span
+                  className={`text-xs px-2 py-1 rounded-full ${
+                    show ? "bg-green-100 text-green-700" : "bg-slate-200"
+                  }`}
+                >
+                  {show ? "Visible" : "Masqué"}
+                </span>
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
