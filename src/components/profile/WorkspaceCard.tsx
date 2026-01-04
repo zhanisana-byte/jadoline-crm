@@ -1,98 +1,103 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type Agency = {
+type MembershipRow = {
+  agency_id: string;
+  role: string | null;
+  status: string | null;
+  created_at: string | null;
+};
+
+type AgencyRow = {
   id: string;
   name: string | null;
   created_at: string | null;
 };
 
-type Membership = {
-  agency_id: string;
-  role: string | null;
-  status: string | null;
-  // ✅ Supabase renvoie souvent un ARRAY ici
-  agencies: Agency[] | null;
+type WorkItem = MembershipRow & {
+  agency?: AgencyRow | null;
 };
 
 function cn(...cls: (string | false | null | undefined)[]) {
   return cls.filter(Boolean).join(" ");
 }
 
-function CopyBtn({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      }}
-      className={cn(
-        "shrink-0 rounded-xl px-3 py-2 text-xs border transition",
-        copied
-          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-          : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700"
-      )}
-    >
-      {copied ? "Copié ✓" : "Copier"}
-    </button>
-  );
-}
-
 export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | null }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [items, setItems] = useState<Membership[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [items, setItems] = useState<WorkItem[]>([]);
 
   async function load() {
     setLoading(true);
-    setError(null);
+    setErr(null);
 
     try {
-      const { data: u } = await supabase.auth.getUser();
-      if (!u.user) {
-        setError("Utilisateur non connecté.");
+      const { data: uRes, error: uErr } = await supabase.auth.getUser();
+      if (uErr) throw uErr;
+
+      const user = uRes.user;
+      if (!user) {
+        setErr("Vous devez être connecté(e) pour afficher vos collaborations.");
         setItems([]);
         return;
       }
 
-      const { data, error } = await supabase
+      // 1) memberships
+      const { data: mems, error: memErr } = await supabase
         .from("agency_members")
-        .select(
-          `
-          agency_id,
-          role,
-          status,
-          agencies:agencies (
-            id,
-            name,
-            created_at
-          )
-        `
-        )
-        .eq("user_id", u.user.id)
+        .select("agency_id, role, status, created_at")
+        .eq("user_id", user.id)
         .eq("status", "active");
 
-      if (error) throw error;
+      if (memErr) throw memErr;
 
-      // ✅ Cast SAFE (unknown -> type) pour Next build
-      const rows = ((data ?? []) as unknown) as Membership[];
+      const memberships: MembershipRow[] = (mems ?? []).map((r: any) => ({
+        agency_id: String(r.agency_id),
+        role: r.role ?? null,
+        status: r.status ?? null,
+        created_at: r.created_at ?? null,
+      }));
 
-      // ✅ OPTION: cacher ton agence perso dans Work
-      // const filtered = myAgencyId ? rows.filter((r) => r.agency_id !== myAgencyId) : rows;
-      // setItems(filtered);
+      // cacher “mon agence personnelle” dans Work (optionnel)
+      const filtered = myAgencyId
+        ? memberships.filter((m) => m.agency_id !== myAgencyId)
+        : memberships;
 
-      // ✅ afficher tout
-      setItems(rows);
+      if (filtered.length === 0) {
+        setItems([]);
+        return;
+      }
+
+      // 2) agencies (requête séparée -> évite les soucis de join / array)
+      const ids = filtered.map((m) => m.agency_id);
+
+      const { data: ags, error: agErr } = await supabase
+        .from("agencies")
+        .select("id, name, created_at")
+        .in("id", ids);
+
+      if (agErr) throw agErr;
+
+      const agencies: AgencyRow[] = (ags ?? []).map((a: any) => ({
+        id: String(a.id),
+        name: a.name ?? null,
+        created_at: a.created_at ?? null,
+      }));
+
+      const byId = new Map(agencies.map((a) => [a.id, a]));
+
+      const merged: WorkItem[] = filtered.map((m) => ({
+        ...m,
+        agency: byId.get(m.agency_id) ?? null,
+      }));
+
+      setItems(merged);
     } catch (e: any) {
-      setError(e?.message ?? "Erreur inconnue");
+      setErr(e?.message ?? "Une erreur est survenue.");
       setItems([]);
     } finally {
       setLoading(false);
@@ -110,13 +115,13 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
         <div>
           <h2 className="text-lg font-semibold">Work (collaborations)</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Les agences où tu es membre (via Agency ID).
+            Les agences où vous êtes membre (via Agency ID).
           </p>
         </div>
 
         <button
           onClick={load}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+          className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
         >
           Rafraîchir
         </button>
@@ -124,9 +129,9 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
 
       {loading ? (
         <div className="mt-4 text-sm text-slate-600">Chargement…</div>
-      ) : error ? (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {error}
+      ) : err ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {err}
         </div>
       ) : items.length === 0 ? (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
@@ -134,47 +139,29 @@ export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | nul
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          {items.map((m) => {
-            const agency = m.agencies?.[0] ?? null;
-            const isMine = myAgencyId ? m.agency_id === myAgencyId : false;
-
-            return (
-              <div key={m.agency_id} className="rounded-xl border border-slate-200 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-semibold">
-                        {agency?.name ?? "Agence"}
-                      </div>
-
-                      {isMine && (
-                        <span className="text-xs rounded-full px-2 py-1 border bg-slate-50 border-slate-200 text-slate-700">
-                          Mon agence
-                        </span>
-                      )}
-
-                      <span
-                        className={cn(
-                          "text-xs rounded-full px-2 py-1 border",
-                          m.role === "OWNER"
-                            ? "bg-slate-900 text-white border-slate-900"
-                            : "bg-white text-slate-700 border-slate-200"
-                        )}
-                      >
-                        {m.role ?? "CM"}
-                      </span>
-                    </div>
-
-                    <div className="text-xs text-slate-500 mt-2 break-all">
-                      Agency ID : <code>{m.agency_id}</code>
-                    </div>
+          {items.map((it) => (
+            <div key={it.agency_id} className="rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold">{it.agency?.name ?? "Agence"}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Agency ID : <code>{it.agency_id}</code>
                   </div>
-
-                  <CopyBtn value={m.agency_id} />
                 </div>
+
+                <span
+                  className={cn(
+                    "text-xs rounded-full px-2 py-1 border",
+                    it.role === "OWNER"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-700 border-slate-200"
+                  )}
+                >
+                  {it.role ?? "CM"}
+                </span>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
     </div>
