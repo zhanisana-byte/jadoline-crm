@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const clientId = url.searchParams.get("client_id");
+  const reqUrl = new URL(req.url);
+  const clientId = reqUrl.searchParams.get("client_id");
   if (!clientId) return NextResponse.json({ error: "missing client_id" }, { status: 400 });
 
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID!;
-  const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/meta/callback`;
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  if (!appId) return NextResponse.json({ error: "missing env NEXT_PUBLIC_META_APP_ID" }, { status: 500 });
 
-  // IMPORTANT: scopes SANS ESPACES
+  // ✅ base URL auto (vercel / prod / localhost)
+  const baseUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    `${reqUrl.protocol}//${reqUrl.host}`;
+
+  const redirectUri = `${baseUrl}/api/meta/callback`;
+
+  // ✅ scopes SANS espaces
   const scope = [
     "pages_show_list",
     "pages_read_engagement",
@@ -16,7 +23,6 @@ export async function GET(req: Request) {
     "instagram_basic",
   ].join(",");
 
-  // state: tu peux mettre un JSON simple (client_id) encodé base64url
   const state = Buffer.from(JSON.stringify({ client_id: clientId })).toString("base64url");
 
   const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
