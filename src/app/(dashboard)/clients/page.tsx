@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 import { PhoneInput } from "react-international-phone";
@@ -15,14 +16,9 @@ type ClientRow = {
   created_at: string | null;
 };
 
-type PlatformItem = {
-  platform: string; // doit matcher ton enum (temporaire tant qu'on fait pas OAuth)
-  page_name: string;
-  page_id: string;
-};
-
 export default function ClientsPage() {
   const supabase = createClient();
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,23 +32,10 @@ export default function ClientsPage() {
 
   // ---- Form states ----
   const [name, setName] = useState("");
-  const [phoneE164, setPhoneE164] = useState(""); // ✅ stocke directement +XXX...
+  const [phoneE164, setPhoneE164] = useState(""); // stocke directement +XXX...
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
 
-  // ✅ Mets ici les valeurs EXACTES de ton ENUM platform (temporaire)
-  const PLATFORM_OPTIONS = useMemo(
-    () => [
-      { value: "FACEBOOK", label: "Facebook (Page)" },
-      { value: "INSTAGRAM", label: "Instagram" },
-      { value: "TIKTOK", label: "TikTok" },
-      { value: "YOUTUBE", label: "YouTube" },
-    ],
-    []
-  );
-
-  // brief_avoid est géré automatiquement par trigger SQL
   const avoidPreview = useMemo(() => {
     const others = clients
       .map((c) => c.name?.trim())
@@ -85,7 +68,6 @@ export default function ClientsPage() {
     const uid = authData.user.id;
     setUserId(uid);
 
-    // agency_id depuis users_profile
     const { data: profile, error: pErr } = await supabase
       .from("users_profile")
       .select("agency_id, role")
@@ -126,30 +108,11 @@ export default function ClientsPage() {
     setName("");
     setPhoneE164("");
     setLogoFile(null);
-    setPlatforms([]);
     setOk(null);
     setError(null);
   }
 
-  function addPlatformRow() {
-    setPlatforms((prev) => [
-      ...prev,
-      { platform: PLATFORM_OPTIONS[0]?.value ?? "", page_name: "", page_id: "" },
-    ]);
-  }
-
-  function updatePlatformRow(index: number, patch: Partial<PlatformItem>) {
-    setPlatforms((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, ...patch } : p))
-    );
-  }
-
-  function removePlatformRow(index: number) {
-    setPlatforms((prev) => prev.filter((_, i) => i !== index));
-  }
-
   function isValidE164(p: string) {
-    // E.164 simple: + puis 8-15 chiffres
     if (!p) return false;
     if (!p.startsWith("+")) return false;
     const digits = p.replace(/[^\d]/g, "");
@@ -171,7 +134,7 @@ export default function ClientsPage() {
     const path = `agencies/${agencyId}/clients/${clientId}/logo.${ext}`;
 
     const { error: upErr } = await supabase.storage
-      .from("client-logos") // ✅ bucket
+      .from("client-logos")
       .upload(path, file, {
         upsert: true,
         contentType: file.type,
@@ -209,26 +172,15 @@ export default function ClientsPage() {
       return;
     }
 
-    // ✅ Téléphone requis (tu as dit obligatoire)
     const cleanPhone = phoneE164.trim();
     if (!isValidE164(cleanPhone)) {
       setError("Téléphone invalide. Exemple: +21620121521");
       return;
     }
 
-    // RS manuel: si une ligne existe, exiger nom+id (temporaire)
-    const badPlatform = platforms.find(
-      (p) => p.platform && (!p.page_id.trim() || !p.page_name.trim())
-    );
-    if (badPlatform) {
-      setError("Chaque réseau ajouté doit avoir un Nom + un ID/URL (temporaire avant OAuth).");
-      return;
-    }
-
     setSaving(true);
 
     try {
-      // 1) Insert client (brief_avoid géré par trigger SQL)
       const { data: client, error: cErr } = await supabase
         .from("clients")
         .insert({
@@ -245,31 +197,16 @@ export default function ClientsPage() {
 
       const clientId = client.id as string;
 
-      // 2) Upload logo (optionnel)
       if (logoFile) {
         await uploadClientLogo({ agencyId, clientId, file: logoFile });
-      }
-
-      // 3) Insert plateformes (optionnel, temporaire)
-      if (platforms.length > 0) {
-        const rows = platforms
-          .filter((p) => p.platform && p.page_id.trim() && p.page_name.trim())
-          .map((p) => ({
-            client_id: clientId,
-            platform: p.platform,
-            page_name: p.page_name.trim(),
-            page_id: p.page_id.trim(),
-          }));
-
-        if (rows.length) {
-          const { error: pErr } = await supabase.from("client_platforms").insert(rows);
-          if (pErr) throw pErr;
-        }
       }
 
       setOk("✅ Client créé avec succès.");
       await loadContextAndClients();
       resetForm();
+
+      // Option: ouvrir direct la page réseaux
+      // router.push(`/dashboard/clients/${clientId}/socials`);
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
     } finally {
@@ -283,49 +220,19 @@ export default function ClientsPage() {
         <div>
           <h1 style={{ margin: 0 }}>Clients</h1>
           <p style={{ margin: "6px 0 0", color: "#64748b" }}>
-            Création client: Nom + Téléphone (tous pays) + Logo (optionnel) + Réseaux
+            Création client: Nom + Téléphone + Logo (optionnel). Les réseaux sont gérés dans la fiche “Réseaux”.
           </p>
         </div>
-        <button
-          onClick={() => loadContextAndClients()}
-          disabled={loading}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid #e2e8f0",
-            background: "white",
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={() => loadContextAndClients()} disabled={loading} style={secondaryBtn}>
           ↻ Refresh
         </button>
       </div>
 
-      {error ? (
-        <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b" }}>
-          {error}
-        </div>
-      ) : null}
-
-      {ok ? (
-        <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#ecfdf5", border: "1px solid #bbf7d0", color: "#065f46" }}>
-          {ok}
-        </div>
-      ) : null}
+      {error ? <Alert type="error" text={error} /> : null}
+      {ok ? <Alert type="ok" text={ok} /> : null}
 
       {/* Create Card */}
-      <div
-        style={{
-          marginTop: 16,
-          padding: 16,
-          borderRadius: 16,
-          border: "1px solid #e2e8f0",
-          background: "white",
-        }}
-      >
-        <h2 style={{ margin: 0 }}>Créer un client</h2>
-
-        {/* Preview brief_avoid */}
+      <Card title="Créer un client">
         <div style={{ marginTop: 10, padding: 12, borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Texte à éviter (auto)</div>
           <div style={{ color: "#475569", fontSize: 13 }}>
@@ -338,34 +245,19 @@ export default function ClientsPage() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
           <div>
-            <label style={{ fontSize: 13, color: "#0f172a" }}>Nom client *</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex: BBGym"
-              style={inputStyle}
-            />
+            <label style={labelStyle}>Nom client *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: BBGym" style={inputStyle} />
           </div>
 
           <div>
-            <label style={{ fontSize: 13, color: "#0f172a" }}>Téléphone (tous pays) *</label>
+            <label style={labelStyle}>Téléphone (tous pays) *</label>
             <div style={{ marginTop: 8 }}>
               <PhoneInput
                 defaultCountry="tn"
                 value={phoneE164}
                 onChange={(val) => setPhoneE164(val)}
-                inputStyle={{
-                  width: "100%",
-                  borderRadius: 12,
-                  border: "1px solid #e2e8f0",
-                  padding: "10px 12px",
-                }}
-                countrySelectorStyleProps={{
-                  buttonStyle: {
-                    borderRadius: 12,
-                    border: "1px solid #e2e8f0",
-                  },
-                }}
+                inputStyle={{ width: "100%", borderRadius: 12, border: "1px solid #e2e8f0", padding: "10px 12px" }}
+                countrySelectorStyleProps={{ buttonStyle: { borderRadius: 12, border: "1px solid #e2e8f0" } }}
               />
             </div>
             <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
@@ -376,109 +268,17 @@ export default function ClientsPage() {
 
         {/* Logo */}
         <div style={{ marginTop: 14 }}>
-          <label style={{ fontSize: 13, color: "#0f172a" }}>Logo (optionnel)</label>
+          <label style={labelStyle}>Logo (optionnel)</label>
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 8 }}>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
-            />
+            <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
             {logoPreview ? (
-              <img
-                src={logoPreview}
-                alt="Preview logo"
-                style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }}
-              />
+              <img src={logoPreview} alt="Preview logo" style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }} />
             ) : (
               <div style={{ width: 64, height: 64, borderRadius: 14, border: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
                 Logo
               </div>
             )}
           </div>
-          <div style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
-            Bucket: <b>client-logos</b> (public).
-          </div>
-        </div>
-
-        {/* Platforms (temporaire) */}
-        <div style={{ marginTop: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <div style={{ fontWeight: 700 }}>Réseaux sociaux (temporaire)</div>
-              <div style={{ color: "#64748b", fontSize: 12 }}>
-                Pour l’instant manuel. Après, on fait “Connecter Meta” (OAuth).
-              </div>
-            </div>
-
-            <button onClick={addPlatformRow} type="button" style={secondaryBtn}>
-              + Ajouter un réseau
-            </button>
-          </div>
-
-          {platforms.length === 0 ? (
-            <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 13 }}>Aucun réseau ajouté.</div>
-          ) : (
-            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-              {platforms.map((p, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 14,
-                    padding: 12,
-                    background: "#ffffff",
-                    display: "grid",
-                    gridTemplateColumns: "180px 1fr 1fr 48px",
-                    gap: 10,
-                    alignItems: "center",
-                  }}
-                >
-                  <select
-                    value={p.platform}
-                    onChange={(e) => updatePlatformRow(idx, { platform: e.target.value })}
-                    style={inputStyle}
-                  >
-                    {PLATFORM_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    value={p.page_name}
-                    onChange={(e) => updatePlatformRow(idx, { page_name: e.target.value })}
-                    placeholder="Nom page/compte"
-                    style={inputStyle}
-                  />
-
-                  <input
-                    value={p.page_id}
-                    onChange={(e) => updatePlatformRow(idx, { page_id: e.target.value })}
-                    placeholder="ID/URL (temporaire)"
-                    style={inputStyle}
-                  />
-
-                  <button
-                    onClick={() => removePlatformRow(idx)}
-                    type="button"
-                    title="Supprimer"
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      border: "1px solid #fee2e2",
-                      background: "#fff1f2",
-                      color: "#b91c1c",
-                      cursor: "pointer",
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
@@ -489,12 +289,10 @@ export default function ClientsPage() {
             Reset
           </button>
         </div>
-      </div>
+      </Card>
 
       {/* List */}
-      <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", background: "white" }}>
-        <h2 style={{ margin: 0 }}>Liste des clients</h2>
-
+      <Card title="Liste des clients">
         {loading ? (
           <div style={{ marginTop: 10, color: "#64748b" }}>Chargement...</div>
         ) : clients.length === 0 ? (
@@ -502,25 +300,10 @@ export default function ClientsPage() {
         ) : (
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
             {clients.map((c) => (
-              <div
-                key={c.id}
-                style={{
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 16,
-                  padding: 12,
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+              <div key={c.id} style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 12, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                   {c.logo_url ? (
-                    <img
-                      src={c.logo_url}
-                      alt={c.name}
-                      style={{ width: 48, height: 48, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }}
-                    />
+                    <img src={c.logo_url} alt={c.name} style={{ width: 48, height: 48, borderRadius: 14, objectFit: "cover", border: "1px solid #e2e8f0" }} />
                   ) : (
                     <div style={{ width: 48, height: 48, borderRadius: 14, border: "1px dashed #cbd5e1", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" }}>
                       —
@@ -533,18 +316,44 @@ export default function ClientsPage() {
                   </div>
                 </div>
 
-                <div style={{ maxWidth: 520, textAlign: "right" }}>
-                  <div style={{ color: "#94a3b8", fontSize: 12 }}>Texte à éviter (auto)</div>
-                  <div style={{ color: "#475569", fontSize: 13 }}>{c.brief_avoid ? c.brief_avoid : "—"}</div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <div style={{ maxWidth: 420, textAlign: "right" }}>
+                    <div style={{ color: "#94a3b8", fontSize: 12 }}>Texte à éviter (auto)</div>
+                    <div style={{ color: "#475569", fontSize: 13 }}>{c.brief_avoid ? c.brief_avoid : "—"}</div>
+                  </div>
+
+                  <button type="button" onClick={() => router.push(`/dashboard/clients/${c.id}/socials`)} style={secondaryBtn}>
+                    🌐 Réseaux
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", background: "white" }}>
+      <h2 style={{ margin: 0 }}>{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function Alert({ type, text }: { type: "error" | "ok"; text: string }) {
+  const style =
+    type === "error"
+      ? { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b" }
+      : { background: "#ecfdf5", border: "1px solid #bbf7d0", color: "#065f46" };
+
+  return <div style={{ marginTop: 14, padding: 12, borderRadius: 12, ...style }}>{text}</div>;
+}
+
+const labelStyle: React.CSSProperties = { fontSize: 13, color: "#0f172a" };
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
