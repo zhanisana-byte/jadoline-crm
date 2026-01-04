@@ -16,20 +16,20 @@ export default function Sidebar() {
   const router = useRouter();
   const supabase = createClient();
 
-const items = [
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Clients", href: "/clients" },
-  { label: "Calendrier", href: "/calendar" },
-  { label: "Publications", href: "/publications" },
-  { label: "Gym", href: "/gym" },
-  { label: "Notifications", href: "/notifications" },
+  const items = [
+    { label: "Dashboard", href: "/dashboard" },
+    { label: "Clients", href: "/clients" },
 
-  // 👇 NOUVEAU
-  { label: "Profil", href: "/profile" },
+    // ✅ NOUVEAU
+    { label: "Récap", href: "/recap" },
 
-  { label: "Abonnement", href: "/subscription" },
-];
-
+    { label: "Calendrier", href: "/calendar" },
+    { label: "Publications", href: "/publications" },
+    { label: "Gym", href: "/gym" },
+    { label: "Notifications", href: "/notifications" },
+    { label: "Profil", href: "/profile" },
+    { label: "Abonnement", href: "/subscription" },
+  ];
 
   return (
     <aside className="w-64 border-r min-h-screen p-4 bg-white">
