@@ -10,13 +10,19 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
+  const [currentEmail, setCurrentEmail] = useState<string | null>(null);
 
-  const [fullName, setFullName] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
-  const [agencyId, setAgencyId] = useState<string | null>(null);
+  // Données profil
+  const [fullName, setFullName] = useState<string>("");
+  const [role, setRole] = useState<string>("");
 
+  // Champs éditables
+  const [editName, setEditName] = useState<string>("");
+  const [editEmail, setEditEmail] = useState<string>("");
+
+  // Join agency
   const [joinValue, setJoinValue] = useState("");
+
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
@@ -32,18 +38,19 @@ export default function ProfilePage() {
 
     const { data: authData, error: aErr } = await supabase.auth.getUser();
     if (aErr || !authData?.user) {
-      setError("Non authentifié. Reconnecte-toi.");
+      setError("Vous n’êtes pas authentifié(e). Veuillez vous reconnecter.");
       setLoading(false);
       return;
     }
 
     const u = authData.user;
     setUserId(u.id);
-    setEmail(u.email ?? null);
+    setCurrentEmail(u.email ?? null);
+    setEditEmail(u.email ?? "");
 
     const { data: profile, error: pErr } = await supabase
       .from("users_profile")
-      .select("full_name, agency_id, role")
+      .select("full_name, role, agency_id")
       .eq("user_id", u.id)
       .maybeSingle();
 
@@ -53,9 +60,9 @@ export default function ProfilePage() {
       return;
     }
 
-    setFullName(profile?.full_name ?? null);
-    setAgencyId(profile?.agency_id ?? null);
-    setRole(profile?.role ?? null);
+    setFullName(profile?.full_name ?? "");
+    setEditName(profile?.full_name ?? "");
+    setRole(profile?.role ?? "");
 
     setLoading(false);
   }
@@ -64,6 +71,60 @@ export default function ProfilePage() {
     await navigator.clipboard.writeText(text);
     setOk("✅ Copié.");
     setTimeout(() => setOk(null), 900);
+  }
+
+  function isValidEmail(v: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+  }
+
+  async function saveProfile() {
+    setError(null);
+    setOk(null);
+
+    if (!userId) {
+      setError("Identifiant utilisateur manquant. Veuillez vous reconnecter.");
+      return;
+    }
+
+    const nextName = editName.trim();
+    const nextEmail = editEmail.trim().toLowerCase();
+
+    if (!nextName) {
+      setError("Le nom est obligatoire.");
+      return;
+    }
+    if (!isValidEmail(nextEmail)) {
+      setError("Email invalide.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // 1) Update Nom dans users_profile
+      const { error: upErr } = await supabase
+        .from("users_profile")
+        .upsert({ user_id: userId, full_name: nextName }, { onConflict: "user_id" });
+
+      if (upErr) throw upErr;
+
+      // 2) Update Email via Supabase Auth (peut demander confirmation par email)
+      if (currentEmail && nextEmail !== currentEmail) {
+        const { error: authErr } = await supabase.auth.updateUser({ email: nextEmail });
+        if (authErr) {
+          // Important : si confirmation requise, Supabase renvoie parfois un message spécifique
+          throw authErr;
+        }
+        setOk("✅ Email mis à jour. Vérifiez votre boîte mail si une confirmation est demandée.");
+      } else {
+        setOk("✅ Profil mis à jour.");
+      }
+
+      await loadMe();
+    } catch (e: any) {
+      setError(e?.message ?? "Erreur inconnue.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const joinPayload = useMemo(() => {
@@ -79,11 +140,11 @@ export default function ProfilePage() {
 
     const v = joinValue.trim();
     if (!v) {
-      setError("Colle l’Agency ID ou le Join Code.");
+      setError("Veuillez coller l’ID de l’agence (ou un code) puis réessayer.");
       return;
     }
     if (!userId) {
-      setError("User manquant. Reconnecte-toi.");
+      setError("Identifiant utilisateur manquant. Veuillez vous reconnecter.");
       return;
     }
 
@@ -93,7 +154,6 @@ export default function ProfilePage() {
       let targetAgencyId: string | null = null;
 
       if ("agency_id" in joinPayload) {
-        // join par agency_id
         const { data, error } = await supabase
           .from("agencies")
           .select("id")
@@ -102,10 +162,8 @@ export default function ProfilePage() {
 
         if (error) throw error;
         if (!data?.id) throw new Error("Agence introuvable (ID invalide).");
-
         targetAgencyId = data.id;
       } else {
-        // join par join_code
         const { data, error } = await supabase
           .from("agencies")
           .select("id")
@@ -115,42 +173,29 @@ export default function ProfilePage() {
 
         if (error) throw error;
         if (!data?.id) throw new Error("Code invalide ou désactivé.");
-
         targetAgencyId = data.id;
       }
 
-      // 2) Mettre à jour users_profile (agency_id)
-      const { error: upErr } = await supabase
+      // 2) Mettre à jour users_profile agency_id
+      const { error: profErr } = await supabase
         .from("users_profile")
-        .upsert(
-          {
-            user_id: userId,
-            agency_id: targetAgencyId,
-          },
-          { onConflict: "user_id" }
-        );
+        .upsert({ user_id: userId, agency_id: targetAgencyId }, { onConflict: "user_id" });
 
-      if (upErr) throw upErr;
+      if (profErr) throw profErr;
 
       // 3) S’assurer membre dans agency_members
-      // ⚠️ Ton champ role est USER-DEFINED (enum). Ajuste si ton enum n’accepte pas "CM".
+      // ⚠️ role est un enum chez vous -> ajustez si votre enum n’accepte pas "CM".
       const { error: memErr } = await supabase
         .from("agency_members")
         .upsert(
-          {
-            user_id: userId,
-            agency_id: targetAgencyId,
-            role: "CM",
-            status: "active",
-          } as any,
-          { onConflict: "user_id" } // si ça échoue: je te donne alternative
+          { user_id: userId, agency_id: targetAgencyId, role: "CM", status: "active" } as any,
+          { onConflict: "user_id" }
         );
 
       if (memErr) throw memErr;
 
-      setOk("✅ Agence rejointe avec succès.");
+      setOk("✅ Vous avez rejoint l’agence avec succès.");
       setJoinValue("");
-      await loadMe();
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
     } finally {
@@ -172,12 +217,12 @@ export default function ProfilePage() {
         <div>
           <h1 className="m-0">Profil</h1>
           <p className="mt-2 muted">
-            Infos personnelles + copier IDs + rejoindre une agence.
+            Vos informations, votre ID et la possibilité de rejoindre une agence.
           </p>
         </div>
 
-        <button onClick={loadMe} disabled={loading} className="btn btn-ghost">
-          ↻ Refresh
+        <button onClick={loadMe} disabled={loading || saving} className="btn btn-ghost">
+          ↻ Actualiser
         </button>
       </div>
 
@@ -185,46 +230,79 @@ export default function ProfilePage() {
       {ok ? <Alert type="ok" text={ok} /> : null}
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1.1fr_.9fr] gap-6">
-        {/* LEFT: infos */}
+        {/* LEFT: Infos + édition */}
         <div className="card p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="card-title">Mes informations</div>
-              <div className="muted mt-1">Copie tes identifiants facilement.</div>
+              <div className="card-title">Vos informations</div>
+              <div className="muted mt-1">Vous pouvez modifier le nom et l’email.</div>
             </div>
             <span className="badge badge-info">Profil</span>
           </div>
 
           <div className="mt-4 grid gap-3">
-            <InfoRow label="Nom" value={fullName ?? "—"} onCopy={fullName ? () => copy(fullName) : undefined} />
-            <InfoRow label="Email" value={email ?? "—"} onCopy={email ? () => copy(email) : undefined} />
-            <InfoRow label="User ID" value={userId ?? "—"} onCopy={userId ? () => copy(userId) : undefined} />
-            <InfoRow label="Agency ID" value={agencyId ?? "— (pas encore)"} onCopy={agencyId ? () => copy(agencyId) : undefined} />
-            <InfoRow label="Rôle" value={role ?? "—"} />
+            <InfoRow
+              label="Votre ID"
+              value={userId ?? "—"}
+              onCopy={userId ? () => copy(userId) : undefined}
+            />
+
+            <div className="rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3">
+              <label>Nom</label>
+              <input
+                className="input mt-1"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Votre nom"
+              />
+              <div className="text-xs text-slate-500 mt-1">
+                Actuel : {fullName || "—"}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3">
+              <label>Email</label>
+              <input
+                className="input mt-1"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                placeholder="ex: you@email.com"
+              />
+              <div className="text-xs text-slate-500 mt-1">
+                Actuel : {currentEmail || "—"} {currentEmail ? "" : "(non défini)"}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                Si Supabase exige une confirmation, vous recevrez un email.
+              </div>
+            </div>
+
+            <InfoRow label="Rôle" value={role || "—"} />
           </div>
 
-          <div className="tip-box mt-5">
-            Tu peux partager ton <b>Agency ID</b> à ton équipe pour qu’ils rejoignent ton agence.
+          <div className="mt-4 flex gap-2">
+            <button onClick={saveProfile} disabled={saving} className="btn btn-primary">
+              {saving ? "Enregistrement..." : "Enregistrer"}
+            </button>
           </div>
         </div>
 
-        {/* RIGHT: join */}
+        {/* RIGHT: rejoindre agence */}
         <div className="card p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="card-title">Rejoindre une agence</div>
-              <div className="muted mt-1">Colle l’Agency ID (UUID) ou le Join Code.</div>
+              <div className="muted mt-1">Collez l’ID de l’agence ou un code.</div>
             </div>
             <span className="badge badge-success">Join</span>
           </div>
 
           <div className="mt-5">
-            <label>Agency ID / Join Code *</label>
+            <label>ID agence / Code</label>
             <input
               className="input"
               value={joinValue}
               onChange={(e) => setJoinValue(e.target.value)}
-              placeholder="Ex: 9a1683e6-e994-... OU CODE123"
+              placeholder="Ex: 9a1683e6-e994-... ou CODE123"
             />
           </div>
 
@@ -238,9 +316,7 @@ export default function ProfilePage() {
           </div>
 
           <div className="tip-box mt-5">
-            Si tu es Owner, partage ton <b>Agency ID</b> à tes CM.
-            <br />
-            Si tu es CM, colle l’ID donné par l’Owner ici.
+            Pour rejoindre une agence, collez l’ID fourni par l’administrateur.
           </div>
         </div>
       </div>
