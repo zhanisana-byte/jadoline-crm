@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 function sbAdmin() {
-  // Service role pour écrire en DB depuis serveur (bypass RLS)
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -12,7 +11,7 @@ function sbAdmin() {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
-  const state = searchParams.get("state"); // on a mis client_id dedans
+  const state = searchParams.get("state"); // client_id encodé
 
   if (!code || !state) {
     return NextResponse.json({ error: "missing code/state" }, { status: 400 });
@@ -20,99 +19,61 @@ export async function GET(req: Request) {
 
   const clientId = decodeURIComponent(state);
 
-  const appId = process.env.META_APP_ID!;
-  const appSecret = process.env.META_APP_SECRET!;
-  const redirectUri = process.env.META_REDIRECT_URI!;
+  const appId = process.env.META_APP_ID;
+  const appSecret = process.env.META_APP_SECRET;
+  const redirectUri = process.env.META_REDIRECT_URI;
 
-  // 1) Exchange code -> user access token
-  const tokenRes = await fetch(
-    `https://graph.facebook.com/v19.0/oauth/access_token` +
-      `?client_id=${encodeURIComponent(appId)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&client_secret=${encodeURIComponent(appSecret)}` +
-      `&code=${encodeURIComponent(code)}`
-  );
+  if (!appId || !appSecret || !redirectUri) {
+    return NextResponse.json(
+      {
+        error: "missing env",
+        META_APP_ID: !!appId,
+        META_APP_SECRET: !!appSecret,
+        META_REDIRECT_URI: !!redirectUri,
+      },
+      { status: 500 }
+    );
+  }
 
+  // 1) échange code -> access_token
+  const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
+  tokenUrl.searchParams.set("client_id", appId);
+  tokenUrl.searchParams.set("client_secret", appSecret);
+  tokenUrl.searchParams.set("redirect_uri", redirectUri);
+  tokenUrl.searchParams.set("code", code);
+
+  const tokenRes = await fetch(tokenUrl.toString(), { method: "GET" });
   const tokenJson = await tokenRes.json();
+
   if (!tokenRes.ok) {
     return NextResponse.json({ error: "token_exchange_failed", details: tokenJson }, { status: 400 });
   }
 
-  const userAccessToken = tokenJson.access_token as string;
+  const accessToken = tokenJson.access_token as string;
+  const expiresIn = tokenJson.expires_in as number | undefined;
 
-  // 2) Get pages list
-  const pagesRes = await fetch(
-    `https://graph.facebook.com/v19.0/me/accounts?access_token=${encodeURIComponent(userAccessToken)}`
-  );
-  const pagesJson = await pagesRes.json();
+  // 2) TODO: stocker en DB (par client)
+  // Exemple : table meta_connections (client_id, access_token, expires_at, updated_at)
+  const sb = sbAdmin();
+  const expiresAt =
+    expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
 
-  if (!pagesRes.ok) {
-    return NextResponse.json({ error: "pages_fetch_failed", details: pagesJson }, { status: 400 });
-  }
-
-  const pages = pagesJson.data as Array<{ id: string; name: string; access_token: string }>;
-  if (!pages?.length) {
-    return NextResponse.json({ error: "no_pages_found" }, { status: 400 });
-  }
-
-  // MVP simple: on prend la 1ère page (après tu feras un écran pour choisir)
-  const page = pages[0];
-
-  // 3) Try get IG business account linked to that page
-  const igRes = await fetch(
-    `https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account,connected_instagram_account&access_token=${encodeURIComponent(page.access_token)}`
-  );
-  const igJson = await igRes.json();
-
-  const igBusinessId =
-    igJson?.instagram_business_account?.id ||
-    igJson?.connected_instagram_account?.id ||
-    null;
-
-  // 4) Save in DB (server-side with service role)
-  const supabase = sbAdmin();
-
-  // upsert facebook row
-  const { error: fbErr } = await supabase
-    .from("client_social_accounts")
+  const { error } = await sb
+    .from("meta_connections")
     .upsert(
       {
         client_id: clientId,
-        platform: "facebook",
-        meta_connected: true,
-        access_token: page.access_token,
-        page_id: page.id,
-        page_name: page.name,
+        access_token: accessToken,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
       },
-      { onConflict: "client_id,platform" }
+      { onConflict: "client_id" }
     );
 
-  if (fbErr) {
-    return NextResponse.json({ error: "db_save_facebook_failed", details: fbErr }, { status: 400 });
+  if (error) {
+    return NextResponse.json({ error: "db_save_failed", details: error }, { status: 500 });
   }
 
-  // upsert instagram row (si trouvé)
-  if (igBusinessId) {
-    const { error: igErr } = await supabase
-      .from("client_social_accounts")
-      .upsert(
-        {
-          client_id: clientId,
-          platform: "instagram",
-          meta_connected: true,
-          access_token: page.access_token, // même token page
-          page_id: page.id,
-          page_name: page.name,
-          ig_business_id: igBusinessId,
-        },
-        { onConflict: "client_id,platform" }
-      );
-
-    if (igErr) {
-      return NextResponse.json({ error: "db_save_instagram_failed", details: igErr }, { status: 400 });
-    }
-  }
-
-  // 5) Redirect back to client page (UX)
-  return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/clients?connected=1`);
+  // 3) retour vers le CRM (page client)
+  return NextResponse.redirect(`https://jadoline.com/clients?meta=connected&client_id=${clientId}`);
 }
