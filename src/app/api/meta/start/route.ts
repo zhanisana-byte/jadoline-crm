@@ -20,21 +20,13 @@ export async function GET(req: Request) {
 
   if (!appId || !redirectUri) {
     return NextResponse.json(
-      {
-        error: "missing env",
-        META_APP_ID: !!appId,
-        META_REDIRECT_URI: !!redirectUri,
-      },
+      { error: "missing env", META_APP_ID: !!appId, META_REDIRECT_URI: !!redirectUri },
       { status: 500 }
     );
   }
 
-  // ✅ Scopes SAFE (pas d'instagram_basic ni pages_read_engagement pour éviter Invalid Scopes)
-  // On récupèrera IG via Graph (instagram_business_account) après.
-  const scope = [
-    "pages_show_list",
-    "pages_manage_metadata",
-  ].join(",");
+  // ✅ Scope minimal compatible
+  const scope = "pages_show_list";
 
   const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
   authUrl.searchParams.set("client_id", appId);
