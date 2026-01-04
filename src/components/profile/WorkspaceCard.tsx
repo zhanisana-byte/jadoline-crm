@@ -16,7 +16,7 @@ type Membership = {
   agencies: Agency | null;
 };
 
-export default function WorkspaceCard() {
+export default function WorkspaceCard({ myAgencyId }: { myAgencyId: string | null }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
@@ -52,6 +52,11 @@ export default function WorkspaceCard() {
 
         if (error) throw error;
 
+        // ✅ si tu veux cacher ton agence perso, active ce filtre :
+        // const filtered = myAgencyId ? (data ?? []).filter((m: any) => m.agency_id !== myAgencyId) : (data ?? []);
+        // setItems(filtered as Membership[]);
+
+        // ✅ sinon afficher tout
         setItems((data ?? []) as Membership[]);
       } catch (e: any) {
         setError(e?.message ?? "Erreur inconnue");
@@ -59,7 +64,7 @@ export default function WorkspaceCard() {
         setLoading(false);
       }
     })();
-  }, [supabase]);
+  }, [supabase, myAgencyId]);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
@@ -81,18 +86,11 @@ export default function WorkspaceCard() {
       ) : (
         <div className="mt-4 space-y-3">
           {items.map((m) => (
-            <div
-              key={m.agency_id}
-              className="rounded-xl border border-slate-200 p-4"
-            >
-              <div className="font-semibold">
-                {m.agencies?.name ?? "Agence sans nom"}
-              </div>
-
+            <div key={m.agency_id} className="rounded-xl border border-slate-200 p-4">
+              <div className="font-semibold">{m.agencies?.name ?? "Agence sans nom"}</div>
               <div className="text-xs text-slate-500 mt-1">
                 Agency ID : <code>{m.agency_id}</code>
               </div>
-
               <span className="inline-block mt-2 rounded-full border px-2 py-1 text-xs">
                 {m.role ?? "CM"}
               </span>
