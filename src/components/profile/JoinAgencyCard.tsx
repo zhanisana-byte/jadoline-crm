@@ -15,8 +15,14 @@ export default function JoinAgencyCard() {
     setMsg(null);
 
     try {
+      const { data: uRes } = await supabase.auth.getUser();
+      if (!uRes.user) {
+        setMsg("Vous devez être connecté(e) pour rejoindre une agence.");
+        return;
+      }
+
       const { error } = await supabase.rpc("join_with_agency_id", {
-        p_agency_id: agencyId,
+        p_agency_id: agencyId.trim(),
       });
 
       if (error) throw error;
@@ -24,10 +30,9 @@ export default function JoinAgencyCard() {
       setMsg("Agence rejointe avec succès ✅");
       setAgencyId("");
 
-      // 🔄 refresh page to reload Work
       window.location.reload();
     } catch (e: any) {
-      setMsg(e?.message ?? "Erreur");
+      setMsg(e?.message ?? "Une erreur est survenue.");
     } finally {
       setLoading(false);
     }
@@ -37,7 +42,7 @@ export default function JoinAgencyCard() {
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
       <h2 className="text-lg font-semibold">Rejoindre une agence</h2>
       <p className="text-sm text-slate-500 mt-1">
-        Entre l’Agency ID reçu (pas de clé).
+        Veuillez saisir l’Agency ID reçu (sans clé).
       </p>
 
       <input
@@ -49,14 +54,14 @@ export default function JoinAgencyCard() {
 
       <button
         onClick={join}
-        disabled={loading || !agencyId}
+        disabled={loading || !agencyId.trim()}
         className="mt-3 w-full rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-800 disabled:opacity-50"
       >
-        {loading ? "Connexion..." : "Rejoindre"}
+        {loading ? "Connexion…" : "Rejoindre"}
       </button>
 
       {msg && (
-        <div className="mt-3 text-sm text-emerald-700">
+        <div className="mt-3 text-sm text-slate-700">
           {msg}
         </div>
       )}
