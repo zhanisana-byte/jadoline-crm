@@ -1,182 +1,103 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-function getBaseUrl(reqUrl: URL) {
-  // ✅ marche sur vercel / prod / localhost
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
-  return `${reqUrl.protocol}//${reqUrl.host}`;
+function verifyAndParseState(state: string, secret: string): { client_id: string } {
+  const [body, sig] = state.split(".");
+  if (!body || !sig) throw new Error("invalid_state_format");
+
+  const expected = crypto.createHmac("sha256", secret).update(body).digest("base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+  if (sig !== expected) throw new Error("invalid_state_signature");
+
+  const json = Buffer.from(body, "base64").toString("utf8"); // body est base64url sans padding, OK
+  const obj = JSON.parse(json);
+  if (!obj.client_id) throw new Error("missing_client_id_in_state");
+  return { client_id: obj.client_id };
 }
 
 function createAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!url || !serviceKey) throw new Error("Missing Supabase env (URL or SERVICE_ROLE_KEY)");
-  return createClient(url, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  return createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-function parseState(state: string | null): { client_id?: string; user_id?: string } {
-  if (!state) return {};
-  try {
-    // state = base64url(JSON)
-    const json = Buffer.from(state, "base64url").toString("utf8");
-    const obj = JSON.parse(json);
-    return { client_id: obj.client_id, user_id: obj.user_id };
-  } catch {
-    return {};
-  }
-}
-
-async function exchangeCodeForToken(params: {
-  code: string;
-  redirectUri: string;
-}) {
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+async function exchangeCodeForToken(code: string, redirectUri: string) {
+  const appId = process.env.META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
-
-  if (!appId || !appSecret) {
-    throw new Error("Missing Meta env (NEXT_PUBLIC_META_APP_ID or META_APP_SECRET)");
-  }
+  if (!appId || !appSecret) throw new Error("Missing Meta env (META_APP_ID or META_APP_SECRET)");
 
   const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
   tokenUrl.searchParams.set("client_id", appId);
   tokenUrl.searchParams.set("client_secret", appSecret);
-  tokenUrl.searchParams.set("redirect_uri", params.redirectUri);
-  tokenUrl.searchParams.set("code", params.code);
+  tokenUrl.searchParams.set("redirect_uri", redirectUri);
+  tokenUrl.searchParams.set("code", code);
 
-  const r = await fetch(tokenUrl.toString(), { method: "GET" });
+  const r = await fetch(tokenUrl.toString());
   const data = await r.json();
-
-  if (!r.ok) {
-    const msg = data?.error?.message || JSON.stringify(data);
-    throw new Error(`meta_token_error: ${msg}`);
-  }
-
-  // { access_token, token_type, expires_in }
+  if (!r.ok) throw new Error(data?.error?.message || "meta_token_error");
   return data as { access_token: string; token_type?: string; expires_in?: number };
 }
 
-async function getMe(accessToken: string) {
-  const meUrl = new URL("https://graph.facebook.com/v19.0/me");
-  meUrl.searchParams.set("fields", "id,name");
-  meUrl.searchParams.set("access_token", accessToken);
-
-  const r = await fetch(meUrl.toString());
-  const data = await r.json();
-  if (!r.ok) {
-    const msg = data?.error?.message || JSON.stringify(data);
-    throw new Error(`meta_me_error: ${msg}`);
-  }
-  return data as { id: string; name: string };
-}
-
 async function getPages(accessToken: string) {
-  // Liste des pages accessibles par l’utilisateur
   const url = new URL("https://graph.facebook.com/v19.0/me/accounts");
-  url.searchParams.set("fields", "id,name,access_token,instagram_business_account");
+  url.searchParams.set("fields", "id,name,access_token");
   url.searchParams.set("access_token", accessToken);
 
   const r = await fetch(url.toString());
   const data = await r.json();
-  if (!r.ok) {
-    const msg = data?.error?.message || JSON.stringify(data);
-    throw new Error(`meta_pages_error: ${msg}`);
-  }
-  return (data?.data ?? []) as Array<{
-    id: string;
-    name: string;
-    access_token?: string; // page token (souvent fourni)
-    instagram_business_account?: { id: string } | null;
-  }>;
+  if (!r.ok) throw new Error(data?.error?.message || "meta_pages_error");
+  return (data?.data ?? []) as Array<{ id: string; name: string; access_token?: string }>;
 }
 
 export async function GET(req: Request) {
   const reqUrl = new URL(req.url);
 
-  // ✅ Meta peut renvoyer error_code / error_message si l’utilisateur annule ou si permissions invalid
-  const errorCode = reqUrl.searchParams.get("error_code");
-  const errorMessage = reqUrl.searchParams.get("error_message");
-  if (errorCode || errorMessage) {
-    // retour vers /clients avec message
-    const baseUrl = getBaseUrl(reqUrl);
-    const redirect = new URL(`${baseUrl}/clients`);
-    redirect.searchParams.set("meta", "error");
-    if (errorMessage) redirect.searchParams.set("reason", errorMessage);
-    return NextResponse.redirect(redirect.toString());
-  }
-
   const code = reqUrl.searchParams.get("code");
   const state = reqUrl.searchParams.get("state");
 
-  if (!code || !state) {
-    return NextResponse.json({ error: "missing code/state" }, { status: 400 });
-  }
+  if (!code || !state) return NextResponse.redirect(new URL("/clients?meta=missing_code_state", reqUrl.origin));
 
-  const { client_id, user_id } = parseState(state);
-  if (!client_id) {
-    return NextResponse.json({ error: "invalid_state" }, { status: 400 });
-  }
+  const stateSecret = process.env.META_STATE_SECRET;
+  const redirectUri = process.env.META_REDIRECT_URI; // doit être EXACTEMENT le même que dans login
 
-  const baseUrl = getBaseUrl(reqUrl);
-  const redirectUri = `${baseUrl}/api/meta/callback`;
+  if (!stateSecret || !redirectUri) {
+    return NextResponse.redirect(new URL("/clients?meta=missing_env", reqUrl.origin));
+  }
 
   try {
-    // 1) Token user (short-lived)
-    const token = await exchangeCodeForToken({ code, redirectUri });
-    const accessToken = token.access_token;
+    const { client_id } = verifyAndParseState(state, stateSecret);
 
-    // 2) Infos user Meta
-    const me = await getMe(accessToken);
+    const token = await exchangeCodeForToken(code, redirectUri);
+    const pages = await getPages(token.access_token);
 
-    // 3) Pages + IG business (si dispo)
-    const pages = await getPages(accessToken);
-
-    // 4) Save DB via SERVICE ROLE (bypass RLS)
     const admin = createAdminSupabase();
+    const expiresAt = token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null;
 
-    // ⚠️ IMPORTANT:
-    // Adapte ces champs à ta table meta_connections si besoin.
-    // (si une colonne n’existe pas -> supabase renverra une erreur)
-    const expiresAt =
-      token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null;
+    // ✅ enregistre ce que tu as (MVP)
+    const { error } = await admin.from("meta_connections").upsert(
+      {
+        client_id,
+        access_token: token.access_token,
+        token_type: token.token_type ?? null,
+        expires_at: expiresAt,
+        pages: pages as any, // colonne jsonb conseillée
+      } as any,
+      { onConflict: "client_id" }
+    );
 
-    const payload = {
-      client_id,
-      // si tu veux lier à l’utilisateur connecté, tu peux stocker user_id dans state au départ.
-      user_id: user_id ?? null,
+    if (error) throw new Error(error.message);
 
-      meta_user_id: me.id,
-      meta_user_name: me.name,
-
-      access_token: accessToken,
-      token_type: token.token_type ?? null,
-      expires_at: expiresAt,
-
-      // on garde une copie “pages” pour debug/usage (si tu as une colonne jsonb)
-      pages: pages as any,
-    };
-
-    // ✅ upsert (évite doublons par client)
-    // Nécessite une contrainte unique sur meta_connections.client_id (ou adapte onConflict)
-    const { error: dbErr } = await admin
-      .from("meta_connections")
-      .upsert(payload as any, { onConflict: "client_id" });
-
-    if (dbErr) {
-      throw new Error(`db_save_failed: ${dbErr.message}`);
-    }
-
-    // 5) Redirect vers page clients (comme ton screenshot)
-    const redirect = new URL(`${baseUrl}/clients`);
-    redirect.searchParams.set("meta", "connected");
-    redirect.searchParams.set("client_id", client_id);
-    return NextResponse.redirect(redirect.toString());
+    const ok = new URL("/clients", reqUrl.origin);
+    ok.searchParams.set("meta", "connected");
+    ok.searchParams.set("client_id", client_id);
+    return NextResponse.redirect(ok.toString());
   } catch (e: any) {
-    const redirect = new URL(`${baseUrl}/clients`);
-    redirect.searchParams.set("meta", "error");
-    redirect.searchParams.set("reason", e?.message ?? "unknown");
-    return NextResponse.redirect(redirect.toString());
+    const ko = new URL("/clients", reqUrl.origin);
+    ko.searchParams.set("meta", "error");
+    ko.searchParams.set("reason", e?.message ?? "unknown");
+    return NextResponse.redirect(ko.toString());
   }
 }
