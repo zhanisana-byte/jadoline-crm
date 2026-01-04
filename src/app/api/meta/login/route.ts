@@ -1,51 +1,30 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
-
-const COOKIE_NAME = "meta_oauth_state";
-
-function b64url(s: string) {
-  return Buffer.from(s).toString("base64url");
-}
-
-function sign(secret: string, base: string) {
-  return crypto.createHmac("sha256", secret).update(base).digest("base64url");
-}
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const clientId = url.searchParams.get("client_id");
-
   if (!clientId) return NextResponse.json({ error: "missing client_id" }, { status: 400 });
 
-  const appId = process.env.META_APP_ID!;
-  const redirectUri = process.env.META_REDIRECT_URI!;
-  const secret = process.env.META_STATE_SECRET!;
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID!;
+  const redirectUri = `${process.env.NEXT_PUBLIC_SITE_URL}/api/meta/callback`;
 
-  if (!appId || !redirectUri || !secret) {
-    return NextResponse.json({ error: "missing META env" }, { status: 500 });
-  }
+  // IMPORTANT: scopes SANS ESPACES
+  const scope = [
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_metadata",
+    "instagram_basic",
+  ].join(",");
 
-  const scopes = ["pages_show_list", "pages_read_engagement", "instagram_basic"];
+  // state: tu peux mettre un JSON simple (client_id) encodé base64url
+  const state = Buffer.from(JSON.stringify({ client_id: clientId })).toString("base64url");
 
-  const payload = { client_id: clientId, nonce: crypto.randomUUID(), ts: Date.now() };
-  const base = b64url(JSON.stringify(payload));
-  const state = `${base}.${sign(secret, base)}`;
+  const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  authUrl.searchParams.set("client_id", appId);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", scope);
+  authUrl.searchParams.set("state", state);
 
-  const oauth = new URL("https://www.facebook.com/v19.0/dialog/oauth");
-  oauth.searchParams.set("client_id", appId);
-  oauth.searchParams.set("redirect_uri", redirectUri);
-  oauth.searchParams.set("state", state);
-  oauth.searchParams.set("response_type", "code");
-  oauth.searchParams.set("scope", scopes.join(","));
-
-  const res = NextResponse.redirect(oauth.toString());
-  res.cookies.set(COOKIE_NAME, state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: true,
-    path: "/",
-    maxAge: 10 * 60,
-  });
-
-  return res;
+  return NextResponse.redirect(authUrl.toString());
 }
