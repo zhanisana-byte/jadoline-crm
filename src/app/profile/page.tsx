@@ -55,7 +55,7 @@ export default function ProfilePage() {
         if (error) throw error;
         setProfile(data as any);
       } catch (e: any) {
-        setErr(e?.message ?? "Erreur");
+        setErr(e?.message ?? "Une erreur est survenue.");
       } finally {
         setLoading(false);
       }
@@ -68,7 +68,7 @@ export default function ProfilePage() {
     <div className="p-6 md:p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Profil</h1>
-        <p className="text-sm text-slate-500">Mes infos, mon agence, et collaborations.</p>
+        <p className="text-sm text-slate-500">Mes informations, mon agence et mes collaborations.</p>
       </div>
 
       <div className="flex gap-2">
@@ -109,7 +109,7 @@ export default function ProfilePage() {
 
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          Chargement...
+          Chargement…
         </div>
       ) : err ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
@@ -125,7 +125,6 @@ export default function ProfilePage() {
             {tab === "infos" && (
               <>
                 <ProfileInfoCard profile={profile} email={email} />
-                {/* ✅ ID seulement + join par ID */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <JoinAgencyCard />
                   <MonAgencyCard myAgencyId={myAgencyId} />
