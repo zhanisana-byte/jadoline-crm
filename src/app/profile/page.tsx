@@ -5,9 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 
 import ProfileInfoCard from "@/components/profile/ProfileInfoCard";
 import MonAgencyCard from "@/components/profile/MonAgencyCard";
-import WorkspaceCard from "@/components/profile/WorkspaceCard";
 import JoinAgencyCard from "@/components/profile/JoinAgencyCard";
-import QuickRecapCard from "@/components/profile/QuickRecapCard";
 
 function cn(...cls: (string | false | null | undefined)[]) {
   return cls.filter(Boolean).join(" ");
@@ -16,7 +14,6 @@ function cn(...cls: (string | false | null | undefined)[]) {
 export default function ProfilePage() {
   const supabase = createClient();
 
-  const [tab, setTab] = useState<"infos" | "agency" | "work">("infos");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -39,6 +36,7 @@ export default function ProfilePage() {
       try {
         const { data: u } = await supabase.auth.getUser();
         const user = u.user;
+
         if (!user) {
           window.location.href = "/login";
           return;
@@ -60,55 +58,21 @@ export default function ProfilePage() {
         setLoading(false);
       }
     })();
-  }, [supabase]);
+  }, []);
 
   const myAgencyId = useMemo(() => profile?.agency_id ?? null, [profile]);
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Profil</h1>
-        <p className="text-sm text-slate-500">Mes informations, mon agence et mes collaborations.</p>
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          onClick={() => setTab("infos")}
-          className={cn(
-            "rounded-xl px-4 py-2 text-sm border",
-            tab === "infos"
-              ? "bg-slate-900 text-white border-slate-900"
-              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-          )}
-        >
-          Mes infos
-        </button>
-        <button
-          onClick={() => setTab("agency")}
-          className={cn(
-            "rounded-xl px-4 py-2 text-sm border",
-            tab === "agency"
-              ? "bg-slate-900 text-white border-slate-900"
-              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-          )}
-        >
-          Mon agence
-        </button>
-        <button
-          onClick={() => setTab("work")}
-          className={cn(
-            "rounded-xl px-4 py-2 text-sm border",
-            tab === "work"
-              ? "bg-slate-900 text-white border-slate-900"
-              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-          )}
-        >
-          Work (collaborations)
-        </button>
+    <div className="p-6 md:p-10 max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900">Profil</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Vos informations, votre agence et l’adhésion à une agence.
+        </p>
       </div>
 
       {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-sm text-slate-600">
           Chargement…
         </div>
       ) : err ? (
@@ -121,24 +85,31 @@ export default function ProfilePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Colonne principale */}
           <div className="lg:col-span-2 space-y-6">
-            {tab === "infos" && (
-              <>
-                <ProfileInfoCard profile={profile} email={email} />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <JoinAgencyCard />
-                  <MonAgencyCard myAgencyId={myAgencyId} />
-                </div>
-              </>
-            )}
+            <ProfileInfoCard profile={profile} email={email} />
 
-            {tab === "agency" && <MonAgencyCard myAgencyId={myAgencyId} />}
-
-            {tab === "work" && <WorkspaceCard myAgencyId={myAgencyId} />}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <JoinAgencyCard />
+              <MonAgencyCard myAgencyId={myAgencyId} />
+            </div>
           </div>
 
+          {/* Side */}
           <div className="space-y-6">
-            <QuickRecapCard />
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+              <h2 className="text-lg font-semibold">Récap</h2>
+              <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                <li>✅ Vous pouvez rejoindre une agence via son Agency ID</li>
+                <li>✅ Votre Agency ID est copiable</li>
+                <li>✅ La partie “Work” sera gérée dans le dashboard</li>
+              </ul>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              Conseil : si vous ne voyez pas votre Agency ID, cela signifie que
+              <code className="mx-1">users_profile.agency_id</code> est vide.
+            </div>
           </div>
         </div>
       )}
