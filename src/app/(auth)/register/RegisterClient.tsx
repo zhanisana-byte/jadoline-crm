@@ -19,173 +19,206 @@ export default function RegisterClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // reset Agency ID when switching type
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
   useEffect(() => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
     setAgencyId("");
   }, [type]);
 
-  const submit = async () => {
-    if (!fullName || !email || !password) return;
-    if (type === "AGENCY" && !agencyName) return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    // validations
+    if (!fullName.trim()) return setErrorMsg("Veuillez saisir votre nom complet.");
+    if (!email.trim()) return setErrorMsg("Veuillez saisir votre email.");
+    if (!password.trim()) return setErrorMsg("Veuillez saisir votre mot de passe.");
+    if (type === "AGENCY" && !agencyName.trim())
+      return setErrorMsg("Veuillez saisir le nom de l’agence.");
 
     setLoading(true);
 
-    // SIGN UP (email confirmation OFF)
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          account_type: type,
+    try {
+      // 1) SIGN UP
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            account_type: type,
+          },
         },
-      },
-    });
-
-    if (error || !data.user) {
-      setLoading(false);
-      return;
-    }
-
-    const userId = data.user.id;
-
-    // CREATE PROFILE
-    await supabase.from("users_profile").insert({
-      user_id: userId,
-      full_name: fullName,
-      account_type: type,
-    });
-
-    // AGENCY
-    if (type === "AGENCY") {
-      const { data: agency } = await supabase
-        .from("agencies")
-        .insert({
-          name: agencyName,
-          owner_id: userId,
-        })
-        .select()
-        .single();
-
-      await supabase.from("agency_members").insert({
-        agency_id: agency.id,
-        user_id: userId,
-        role: "OWNER",
       });
 
-      await supabase
-        .from("users_profile")
-        .update({
+      if (authError || !authData.user) throw authError || new Error("Signup failed");
+      const userId = authData.user.id;
+
+      // 2) PROFILE
+      const { error: profileError } = await supabase.from("users_profile").insert({
+        user_id: userId,
+        full_name: fullName.trim(),
+        account_type: type,
+      });
+
+      if (profileError) throw profileError;
+
+      // 3) AGENCY
+      if (type === "AGENCY") {
+        const { data: agency, error: agencyError } = await supabase
+          .from("agencies")
+          .insert({
+            name: agencyName.trim(),
+            owner_id: userId,
+          })
+          .select()
+          .single();
+
+        if (agencyError || !agency) throw agencyError || new Error("Agency creation failed");
+
+        const { error: memberError } = await supabase.from("agency_members").insert({
           agency_id: agency.id,
-          agency_name: agency.name,
-        })
-        .eq("user_id", userId);
-    }
+          user_id: userId,
+          role: "OWNER",
+        });
 
-    // SOCIAL MANAGER
-    if (type === "SOCIAL_MANAGER" && agencyId) {
-      await supabase.from("agency_members").insert({
-        agency_id: agencyId,
-        user_id: userId,
-        role: "SOCIAL_MANAGER",
-      });
-    }
+        if (memberError) throw memberError;
 
-    setLoading(false);
-    router.replace("/dashboard"); // ✅ DIRECT CRM
+        // optional update profile with agency info
+        const { error: updError } = await supabase
+          .from("users_profile")
+          .update({
+            agency_id: agency.id,
+            agency_name: agency.name,
+          })
+          .eq("user_id", userId);
+
+        if (updError) throw updError;
+      }
+
+      // 4) SOCIAL MANAGER (optional join)
+      if (type === "SOCIAL_MANAGER" && agencyId.trim()) {
+        const { error: joinError } = await supabase.from("agency_members").insert({
+          agency_id: agencyId.trim(),
+          user_id: userId,
+          role: "SOCIAL_MANAGER",
+        });
+        if (joinError) throw joinError;
+      }
+
+      setSuccessMsg("Compte créé. Redirection...");
+      router.replace("/dashboard");
+    } catch (err: any) {
+      console.error("REGISTER ERROR ❌", err);
+      setErrorMsg(err?.message || "Erreur lors de la création du compte.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="register-bg">
-      <div className="register-card">
+    <div className="auth-wrap">
+      <div className="auth-card">
+        <div className="auth-card-inner">
+          <h1 className="auth-title">Créer un compte Jadoline</h1>
+          <p className="auth-subtitle">CRM professionnel multi-agence</p>
 
-        <h1 className="register-title">Créer un compte Jadoline</h1>
-        <p className="register-subtitle">CRM professionnel multi-agence</p>
+          <div className="account-switch">
+            <button
+              type="button"
+              className={type === "AGENCY" ? "active" : ""}
+              onClick={() => setType("AGENCY")}
+              disabled={loading}
+            >
+              Agence
+            </button>
+            <button
+              type="button"
+              className={type === "SOCIAL_MANAGER" ? "active" : ""}
+              onClick={() => setType("SOCIAL_MANAGER")}
+              disabled={loading}
+            >
+              Social Manager
+            </button>
+          </div>
 
-        {/* SWITCH */}
-        <div className="account-switch">
-          <button
-            type="button"
-            className={type === "AGENCY" ? "active" : ""}
-            onClick={() => setType("AGENCY")}
-          >
-            Agence
-          </button>
-          <button
-            type="button"
-            className={type === "SOCIAL_MANAGER" ? "active" : ""}
-            onClick={() => setType("SOCIAL_MANAGER")}
-          >
-            Social Manager
-          </button>
-        </div>
+          {errorMsg && <div className="alert alert-error">{errorMsg}</div>}
+          {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-        {/* FORM */}
-        <form
-          className="register-form"
-          autoComplete="off"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <input
-            className="input"
-            placeholder="Nom complet"
-            autoComplete="off"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-          />
+          <form className="auth-form" onSubmit={handleSubmit}>
+            <div>
+              <label>Nom complet</label>
+              <input
+                className="input"
+                placeholder="Ex: Sana Zhani"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                disabled={loading}
+              />
+            </div>
 
-          {type === "AGENCY" && (
-            <input
-              className="input"
-              placeholder="Nom de l’agence"
-              autoComplete="off"
-              value={agencyName}
-              onChange={(e) => setAgencyName(e.target.value)}
-            />
-          )}
+            {type === "AGENCY" && (
+              <div>
+                <label>Nom de l’agence</label>
+                <input
+                  className="input"
+                  placeholder="Ex: Sana Com"
+                  value={agencyName}
+                  onChange={(e) => setAgencyName(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+            )}
 
-          {type === "SOCIAL_MANAGER" && (
-            <input
-              className="input"
-              placeholder="Agency ID (optionnel)"
-              autoComplete="off"
-              value={agencyId}
-              onChange={(e) => setAgencyId(e.target.value)}
-            />
-          )}
+            {type === "SOCIAL_MANAGER" && (
+              <div>
+                <label>Agency ID (optionnel)</label>
+                <input
+                  className="input"
+                  placeholder="UUID de l’agence"
+                  value={agencyId}
+                  onChange={(e) => setAgencyId(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+            )}
 
-          <input
-            className="input"
-            type="email"
-            placeholder="Email professionnel"
-            autoComplete="new-email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+            <div>
+              <label>Email</label>
+              <input
+                className="input"
+                type="email"
+                placeholder="email@exemple.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+              />
+            </div>
 
-          <input
-            className="input"
-            type="password"
-            placeholder="Mot de passe"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+            <div>
+              <label>Mot de passe</label>
+              <input
+                className="input"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+              />
+            </div>
 
-          <button
-            type="submit"
-            className="register-btn"
-            disabled={loading}
-          >
-            {loading ? "Création..." : "Créer mon compte"}
-          </button>
-        </form>
+            <button className="auth-btn" type="submit" disabled={loading}>
+              {loading ? "Création..." : "Créer mon compte"}
+            </button>
+          </form>
 
-        <div className="register-footer">
-          Déjà un compte ? <a href="/login">Connexion</a>
+          <div className="auth-footer">
+            Déjà un compte ? <a href="/login">Connexion</a>
+          </div>
         </div>
       </div>
     </div>
