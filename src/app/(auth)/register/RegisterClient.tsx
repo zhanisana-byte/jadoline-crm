@@ -19,46 +19,90 @@ export default function RegisterClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // 🔹 RESET agencyId quand on change de type
+  // reset agency id when switch
   useEffect(() => {
     setAgencyId("");
   }, [type]);
 
   const submit = async () => {
     if (!fullName || !email || !password) return;
-
     if (type === "AGENCY" && !agencyName) return;
 
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
+    // 1️⃣ SIGN UP (EMAIL CONFIRMATION OFF)
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName,
           account_type: type,
-          agency_name: type === "AGENCY" ? agencyName : null,
-          join_agency_id:
-            type === "SOCIAL_MANAGER" && agencyId ? agencyId : null,
         },
-        emailRedirectTo: `${location.origin}/auth/callback`,
       },
     });
 
+    if (error || !data.user) {
+      setLoading(false);
+      return;
+    }
+
+    const userId = data.user.id;
+
+    // 2️⃣ CREATE PROFILE
+    await supabase.from("users_profile").insert({
+      user_id: userId,
+      full_name: fullName,
+      account_type: type,
+    });
+
+    // 3️⃣ AGENCY FLOW
+    if (type === "AGENCY") {
+      const { data: agency } = await supabase
+        .from("agencies")
+        .insert({
+          name: agencyName,
+          owner_id: userId,
+        })
+        .select()
+        .single();
+
+      await supabase.from("agency_members").insert({
+        agency_id: agency.id,
+        user_id: userId,
+        role: "OWNER",
+      });
+
+      await supabase
+        .from("users_profile")
+        .update({
+          agency_id: agency.id,
+          agency_name: agency.name,
+        })
+        .eq("user_id", userId);
+    }
+
+    // 4️⃣ SOCIAL MANAGER FLOW
+    if (type === "SOCIAL_MANAGER" && agencyId) {
+      await supabase.from("agency_members").insert({
+        agency_id: agencyId,
+        user_id: userId,
+        role: "SOCIAL_MANAGER",
+      });
+    }
+
     setLoading(false);
-    if (!error) router.push("/check-email");
+
+    // 5️⃣ REDIRECT DIRECT CRM
+    router.replace("/dashboard");
   };
 
   return (
     <div className="register-bg">
       <div className="register-card">
-
-        {/* HEADER */}
         <h1 className="register-title">Créer un compte Jadoline</h1>
         <p className="register-subtitle">CRM professionnel multi-agence</p>
 
-        {/* SWITCH */}
         <div className="account-switch">
           <button
             type="button"
@@ -76,7 +120,6 @@ export default function RegisterClient() {
           </button>
         </div>
 
-        {/* FORM */}
         <form
           className="register-form"
           autoComplete="off"
@@ -133,18 +176,16 @@ export default function RegisterClient() {
 
           <button
             type="submit"
-            disabled={loading}
             className="register-btn"
+            disabled={loading}
           >
             {loading ? "Création..." : "Créer mon compte"}
           </button>
         </form>
 
-        {/* FOOTER */}
         <div className="register-footer">
           Déjà un compte ? <a href="/login">Connexion</a>
         </div>
-
       </div>
     </div>
   );
