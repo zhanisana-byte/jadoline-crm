@@ -26,8 +26,18 @@ type InviteRow = {
   token: string;
   status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED" | string;
   created_at: string;
-  created_by: string;
-  accepted_at: string | null;
+};
+
+type MemberRow = {
+  user_id: string;
+  role: string;
+  status: string | null;
+  created_at: string | null;
+  profile: {
+    full_name: string | null;
+    avatar_url: string | null;
+    account_type: string | null;
+  } | null;
 };
 
 function cn(...s: Array<string | false | null | undefined>) {
@@ -53,6 +63,10 @@ function formatDate(d: string) {
   }
 }
 
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 export default function ProfilePage() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -67,11 +81,18 @@ export default function ProfilePage() {
   const [invitesForMe, setInvitesForMe] = useState<InviteRow[]>([]);
   const [invitesForAgency, setInvitesForAgency] = useState<InviteRow[]>([]);
 
+  const [members, setMembers] = useState<MemberRow[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+
   const isAgency = profile?.account_type === "AGENCY";
 
-  // Join
+  // Join (SM)
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
+
+  // Agency invite SM by email
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
@@ -81,6 +102,9 @@ export default function ProfilePage() {
   const [editAvatarUrl, setEditAvatarUrl] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editAgencyName, setEditAgencyName] = useState("");
+
+  // Switch (SM -> Agency)
+  const [switchBusy, setSwitchBusy] = useState(false);
 
   // Toast
   const [toast, setToast] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
@@ -92,6 +116,48 @@ export default function ProfilePage() {
 
   function loginUrl() {
     return "/login?next=/profile";
+  }
+
+  async function loadMembers(agencyId: string) {
+    setMembersLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("agency_members")
+        .select(
+          `
+          user_id,
+          role,
+          status,
+          created_at,
+          profile:users_profile (
+            full_name,
+            avatar_url,
+            account_type
+          )
+        `
+        )
+        .eq("agency_id", agencyId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setMembers([]);
+        setToast({ type: "err", msg: `Members: ${error.message}` });
+        return;
+      }
+
+      const rows = (data || []) as any[];
+      setMembers(
+        rows.map((r) => ({
+          user_id: r.user_id,
+          role: r.role,
+          status: r.status ?? null,
+          created_at: r.created_at ?? null,
+          profile: r.profile ?? null,
+        }))
+      );
+    } finally {
+      setMembersLoading(false);
+    }
   }
 
   async function loadAll() {
@@ -120,44 +186,48 @@ export default function ProfilePage() {
     const pr = p as ProfileRow;
     setProfile(pr);
 
-    // Agency if linked
+    let ag: AgencyRow | null = null;
     if (pr.agency_id) {
       const { data: a, error: aErr } = await supabase
         .from("agencies")
         .select("id, name, join_code")
         .eq("id", pr.agency_id)
         .single();
-      setAgency(!aErr && a ? (a as AgencyRow) : null);
-    } else {
-      setAgency(null);
+      ag = !aErr && a ? (a as AgencyRow) : null;
     }
+    setAgency(ag);
 
-    // Invites for me (by email)
+    // Invites for me (SM) by email
     if (u.user.email) {
       const { data: invMe, error: invMeErr } = await supabase
         .from("agency_invites")
-        .select("id, agency_id, email, token, status, created_at, created_by, accepted_at")
+        .select("id, agency_id, email, token, status, created_at")
         .eq("email", u.user.email)
         .eq("status", "PENDING")
         .order("created_at", { ascending: false });
-
       setInvitesForMe(!invMeErr ? ((invMe || []) as InviteRow[]) : []);
     } else {
       setInvitesForMe([]);
     }
 
-    // Invites for agency (incoming requests)
+    // Invites for agency (AGENCY receives)
     if (pr.account_type === "AGENCY" && pr.agency_id) {
       const { data: invAg, error: invAgErr } = await supabase
         .from("agency_invites")
-        .select("id, agency_id, email, token, status, created_at, created_by, accepted_at")
+        .select("id, agency_id, email, token, status, created_at")
         .eq("agency_id", pr.agency_id)
         .eq("status", "PENDING")
         .order("created_at", { ascending: false });
-
       setInvitesForAgency(!invAgErr ? ((invAg || []) as InviteRow[]) : []);
     } else {
       setInvitesForAgency([]);
+    }
+
+    // Members list (only for AGENCY)
+    if (pr.account_type === "AGENCY" && pr.agency_id) {
+      await loadMembers(pr.agency_id);
+    } else {
+      setMembers([]);
     }
 
     setLoading(false);
@@ -207,6 +277,34 @@ export default function ProfilePage() {
     }
   }
 
+  // ✅ New: Agency invite Social Manager by email
+  async function inviteSocialManagerByEmail() {
+    const em = inviteEmail.trim().toLowerCase();
+    if (!em || !isValidEmail(em)) {
+      setToast({ type: "err", msg: "Email invalide." });
+      return;
+    }
+    if (!isAgency || !profile?.agency_id) {
+      setToast({ type: "err", msg: "Action réservée à une agence." });
+      return;
+    }
+
+    setInviteBusy(true);
+    try {
+      // RPC recommended for RLS + checks + token generation
+      const { error } = await supabase.rpc("invite_social_manager", { p_email: em });
+      if (error) {
+        setToast({ type: "err", msg: `Invitation: ${error.message}` });
+        return;
+      }
+      setInviteEmail("");
+      setToast({ type: "ok", msg: "Invitation envoyée ✅" });
+      await loadAll();
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
   async function acceptInviteForMe(token: string) {
     const { error } = await supabase.rpc("accept_agency_invite", { p_token: token });
     if (error) {
@@ -241,7 +339,6 @@ export default function ProfilePage() {
     if (!profile) return;
     setSaveBusy(true);
     try {
-      // 1) update profile (name/avatar)
       const { error: pErr } = await supabase
         .from("users_profile")
         .update({
@@ -255,7 +352,6 @@ export default function ProfilePage() {
         return;
       }
 
-      // 2) update agency name (if AGENCY)
       if (isAgency && profile.agency_id) {
         const newName = editAgencyName.trim();
         if (newName) {
@@ -270,7 +366,6 @@ export default function ProfilePage() {
         }
       }
 
-      // 3) update auth email (if changed)
       const newEmail = editEmail.trim();
       if (newEmail && newEmail !== (userEmail ?? "")) {
         const { error: eErr } = await supabase.auth.updateUser({ email: newEmail });
@@ -290,22 +385,31 @@ export default function ProfilePage() {
     }
   }
 
-  const headerTitle = useMemo(() => {
-    const full = profile?.full_name || "Mon profil";
-    const agencyName = agency?.name;
-    if (isAgency && agencyName) return agencyName;
-    return full;
-  }, [profile?.full_name, agency?.name, isAgency]);
+  async function switchToAgency() {
+    setSwitchBusy(true);
+    try {
+      const { error } = await supabase.rpc("switch_to_agency");
+      if (error) {
+        setToast({
+          type: "err",
+          msg: "Switch indisponible (RPC manquante ou erreur): " + error.message,
+        });
+        return;
+      }
+      setToast({ type: "ok", msg: "Vous êtes maintenant une Agence ✅" });
+      await loadAll();
+    } finally {
+      setSwitchBusy(false);
+    }
+  }
 
-  const headerSubtitle = useMemo(() => {
-    const full = profile?.full_name || "";
-    const type = isAgency ? "Compte Agence" : "Social Manager";
-    if (isAgency) return `${type} • ${full || "Owner"}`;
-    return type;
-  }, [profile?.full_name, isAgency]);
+  const heroTitle = isAgency ? (agency?.name || "Mon agence") : (profile?.full_name || "Mon profil");
+  const heroSub = isAgency
+    ? `Compte Agence • ${profile?.full_name || "Owner"}`
+    : "Social Manager";
 
-  const inviteCount = isAgency ? invitesForAgency.length : invitesForMe.length;
   const invites = isAgency ? invitesForAgency : invitesForMe;
+  const inviteCount = invites.length;
 
   return (
     <div className="crm-shell">
@@ -326,13 +430,13 @@ export default function ProfilePage() {
               <div className="flex items-center gap-4 min-w-0">
                 <div className="crm-avatar">{initials(isAgency ? agency?.name : profile?.full_name)}</div>
                 <div className="min-w-0">
-                  <div className="text-2xl font-semibold truncate">{headerTitle}</div>
-                  <div className="text-white/85 text-sm mt-1">{headerSubtitle}</div>
+                  <div className="text-2xl font-semibold truncate">{heroTitle}</div>
+                  <div className="text-white/85 text-sm mt-1">{heroSub}</div>
                   {userEmail && <div className="text-white/75 text-xs mt-1 truncate">{userEmail}</div>}
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button onClick={openEdit} className="crm-btn-glass">✏️ Modifier</button>
                 <button onClick={() => loadAll()} className="crm-btn-glass">⟳ Actualiser</button>
               </div>
@@ -341,25 +445,48 @@ export default function ProfilePage() {
 
           {/* CONTENT */}
           <div className="p-5 sm:p-7">
+            {/* TOP GRID */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* ACCESS AGENCY */}
+              {/* LEFT */}
               <div className="crm-card-soft p-5">
-                <div className="text-sm font-semibold">Accès agence</div>
+                <div className="text-sm font-semibold">
+                  {isAgency ? "Identifiants agence" : "Rejoindre une agence"}
+                </div>
                 <div className="text-sm text-slate-600 mt-1">
-                  {isAgency ? "Votre ID agence à partager." : "Rejoindre une agence via code (demande en attente)."}
+                  {isAgency
+                    ? "Partagez votre code avec vos Social Managers."
+                    : "Entrez le code join_code fourni par une agence."}
                 </div>
 
                 {isAgency ? (
-                  <div className="mt-4 flex items-center gap-2">
-                    <div className="crm-pill flex-1">
-                      ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
+                  <div className="mt-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="crm-pill flex-1">
+                        ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
+                      </div>
+                      <button
+                        onClick={() => profile?.agency_id && copyText(profile.agency_id)}
+                        className="crm-btn-soft"
+                      >
+                        Copier
+                      </button>
                     </div>
-                    <button
-                      onClick={() => profile?.agency_id && copyText(profile.agency_id)}
-                      className="crm-btn-soft"
-                    >
-                      Copier
-                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="crm-pill flex-1">
+                        Join code: <span className="font-extrabold">{agency?.join_code ?? "—"}</span>
+                      </div>
+                      <button
+                        onClick={() => agency?.join_code && copyText(agency.join_code)}
+                        className="crm-btn-soft"
+                      >
+                        Copier
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-slate-500 mt-2">
+                      (Recommandé: partager le <b>join_code</b> plutôt que l’UUID.)
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-4 flex items-center gap-2">
@@ -375,12 +502,26 @@ export default function ProfilePage() {
                   </div>
                 )}
 
-                <div className="mt-4 text-xs text-slate-500">
-                  Conseillé: utiliser le <b>join_code</b> (plus simple que UUID).
-                </div>
+                {!isAgency && (
+                  <div className="mt-4 crm-pill">
+                    Agence actuelle: <span className="font-extrabold">{agency?.name ?? "Aucune"}</span>
+                  </div>
+                )}
+
+                {!isAgency && (
+                  <div className="mt-4 space-y-2">
+                    <button onClick={openEdit} className="crm-btn-soft w-full">Modifier profil</button>
+                    <button onClick={switchToAgency} disabled={switchBusy} className="crm-btn-primary w-full">
+                      {switchBusy ? "..." : "Créer mon agence (Switch)"}
+                    </button>
+                    <div className="text-xs text-slate-500">
+                      Le switch crée votre agence et vous passe en mode <b>AGENCY</b>.
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* INVITES */}
+              {/* RIGHT */}
               <div className="crm-card-soft p-5 lg:col-span-2">
                 <div className="flex items-center justify-between">
                   <div>
@@ -440,54 +581,90 @@ export default function ProfilePage() {
                     ))
                   )}
                 </div>
-              </div>
-            </div>
-
-            {/* BOTTOM */}
-            <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="crm-card-soft p-5">
-                <div className="text-sm font-semibold">Type de compte</div>
-                <div className="mt-3 inline-flex items-center gap-2 crm-pill">
-                  <span className="font-extrabold">{isAgency ? "🏢 Agence" : "👤 Social Manager"}</span>
-                  {profile?.role ? <span className="text-slate-600">• {profile.role}</span> : null}
-                </div>
-
-                <div className="mt-4 text-sm text-slate-600">
-                  {isAgency
-                    ? "Vous gérez les demandes d’accès ici via Invitations."
-                    : "Vos collaborations détaillées seront dans la page Récap."}
-                </div>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
-                    Dashboard
-                  </button>
-                  <button onClick={() => router.push("/recap")} className="crm-btn-soft">
-                    Récap
-                  </button>
-                </div>
-              </div>
-
-              <div className="crm-card-soft p-5 lg:col-span-2">
-                <div className="text-sm font-semibold">Résumé</div>
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="crm-card-soft p-4">
-                    <div className="text-xs text-slate-500">Invitations en attente</div>
-                    <div className="text-2xl font-black mt-1">{inviteCount}</div>
-                  </div>
-                  <div className="crm-card-soft p-4">
-                    <div className="text-xs text-slate-500">Agence liée</div>
-                    <div className="text-sm font-extrabold mt-2 truncate">{agency?.name ?? "—"}</div>
-                  </div>
-                  <div className="crm-card-soft p-4">
-                    <div className="text-xs text-slate-500">User ID</div>
-                    <div className="text-sm font-extrabold mt-2 truncate">{profile?.user_id ?? "—"}</div>
-                  </div>
-                </div>
 
                 {loading && <div className="mt-4 text-sm text-slate-600">Chargement…</div>}
               </div>
             </div>
+
+            {/* ✅ AGENCY SECTION: Invite SM + Team */}
+            {isAgency && (
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Invite SM */}
+                <div className="crm-card-soft p-5">
+                  <div className="text-sm font-semibold">Inviter Social Manager</div>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Entrez l’email du Social Manager (doit exister dans Jadoline).
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <input
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="email@exemple.com"
+                      className="crm-input"
+                    />
+                    <button
+                      onClick={inviteSocialManagerByEmail}
+                      disabled={inviteBusy}
+                      className="crm-btn-primary w-full"
+                    >
+                      {inviteBusy ? "Envoi..." : "Envoyer invitation"}
+                    </button>
+                    <div className="text-xs text-slate-500">
+                      L’invitation apparaîtra dans “Invitations” et le SM la verra aussi.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Team */}
+                <div className="crm-card-soft p-5 lg:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">Équipe Social Managers</div>
+                      <div className="text-sm text-slate-600 mt-1">
+                        Membres actuels de l’agence.
+                      </div>
+                    </div>
+                    <span className="crm-badge">{members.length}</span>
+                  </div>
+
+                  <div className="mt-4">
+                    {membersLoading ? (
+                      <div className="text-sm text-slate-600">Chargement de l’équipe…</div>
+                    ) : members.length === 0 ? (
+                      <div className="crm-empty">Aucun membre pour le moment.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {members.map((m) => {
+                          const nm = m.profile?.full_name || m.user_id.slice(0, 8);
+                          const at = m.profile?.account_type || "";
+                          return (
+                            <div key={m.user_id} className="crm-invite">
+                              <div className="flex items-center gap-3">
+                                <div className="crm-avatar" style={{ width: 46, height: 46, fontSize: 14 }}>
+                                  {initials(nm)}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-extrabold truncate">{nm}</div>
+                                  <div className="text-sm text-slate-600 mt-1">
+                                    {at || "MEMBER"} • {m.role} • {m.status || "active"}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">Ouvrir Récap</button>
+                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">Dashboard</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -502,9 +679,7 @@ export default function ProfilePage() {
                     Nom, email, avatar{isAgency ? ", agence" : ""}
                   </div>
                 </div>
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
-                  ✕
-                </button>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">✕</button>
               </div>
 
               <div className="p-6 space-y-4">
