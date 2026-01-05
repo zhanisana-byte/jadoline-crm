@@ -4,511 +4,563 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
+type ProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  agency_id: string | null;
+  account_type: "AGENCY" | "SOCIAL_MANAGER" | string | null;
+  role: string | null;
+};
+
 type AgencyRow = {
   id: string;
-  name: string | null;
-  join_code?: string | null;
-  logo_url?: string | null;
-  brand_color?: string | null;
+  name: string;
+  join_code: string | null;
 };
 
-type ProfileRow = {
-  id: string; // same as auth.user.id
-  full_name?: string | null;
-  email?: string | null;
-  agency_id?: string | null;
-  account_type?: string | null; // "AGENCY" | "CM" ...
-  created_at?: string | null;
-};
-
-type InvitationRow = {
+type InviteRow = {
   id: string;
-  status?: string | null; // "pending"
+  agency_id: string;
+  email: string;
+  token: string;
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED" | string;
+  created_at: string;
+  created_by: string;
+  accepted_at: string | null;
 };
 
-const COLORS = [
-  "#0B1222", "#111827", "#1F2937", "#334155",
-  "#6D28D9", "#4F46E5", "#2563EB", "#0891B2",
-  "#16A34A", "#B45309", "#BE123C", "#7C2D12"
-];
-
-function clsx(...a: (string | false | null | undefined)[]) {
-  return a.filter(Boolean).join(" ");
+function initials(name?: string | null) {
+  const n = (name || "").trim();
+  if (!n) return "JD";
+  const parts = n.split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]?.toUpperCase()).join("");
 }
-
-function formatDate(ts?: string | null) {
-  if (!ts) return "-";
+function formatDate(d: string) {
   try {
-    const d = new Date(ts);
-    return d.toLocaleString("fr-FR");
+    return new Date(d).toLocaleDateString("fr-FR", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
   } catch {
-    return ts;
+    return d;
   }
 }
+function cn(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
+}
 
-export default function ProfileClient() {
-  const supabase = createClient();
+export default function ProfilePage() {
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
+  const ran = useRef(false);
 
   const [loading, setLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [agency, setAgency] = useState<AgencyRow | null>(null);
 
-  const [pendingInvites, setPendingInvites] = useState<number>(0);
+  // Invitations reçues par l’utilisateur (SM): agency_invites.email = user.email
+  const [invitesForMe, setInvitesForMe] = useState<InviteRow[]>([]);
 
-  const [editAgency, setEditAgency] = useState(false);
-  const [agencyName, setAgencyName] = useState("");
+  // Invitations reçues par l’agence (AGENCY): agency_invites.agency_id = my agency_id
+  const [invitesForAgency, setInvitesForAgency] = useState<InviteRow[]>([]);
 
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const isAgency = profile?.account_type === "AGENCY";
 
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  // Join request
+  const [joinCode, setJoinCode] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
 
-  const brandColor = useMemo(() => agency?.brand_color || "#0B1222", [agency?.brand_color]);
+  // Edit modal
+  const [editOpen, setEditOpen] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  const [editFullName, setEditFullName] = useState("");
+  const [editAvatarUrl, setEditAvatarUrl] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editAgencyName, setEditAgencyName] = useState("");
+
+  // Toast
+  const [toast, setToast] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  function loginUrl() {
+    return "/login?next=/profile";
+  }
+
+  async function loadAll() {
+    setLoading(true);
+
+    const { data: u, error: uErr } = await supabase.auth.getUser();
+    if (uErr || !u?.user) {
+      router.replace(loginUrl());
+      return;
+    }
+    setUserEmail(u.user.email ?? null);
+
+    const { data: p, error: pErr } = await supabase
+      .from("users_profile")
+      .select("user_id, full_name, avatar_url, agency_id, account_type, role")
+      .eq("user_id", u.user.id)
+      .single();
+
+    if (pErr) {
+      setToast({ type: "err", msg: `Profil introuvable: ${pErr.message}` });
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
+    const pr = p as ProfileRow;
+    setProfile(pr);
+
+    // Agency (si lié)
+    if (pr.agency_id) {
+      const { data: a, error: aErr } = await supabase
+        .from("agencies")
+        .select("id, name, join_code")
+        .eq("id", pr.agency_id)
+        .single();
+      setAgency(!aErr && a ? (a as AgencyRow) : null);
+    } else {
+      setAgency(null);
+    }
+
+    // Invites for me (by email)
+    if (u.user.email) {
+      const { data: invMe, error: invMeErr } = await supabase
+        .from("agency_invites")
+        .select("id, agency_id, email, token, status, created_at, created_by, accepted_at")
+        .eq("email", u.user.email)
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false });
+
+      setInvitesForMe(!invMeErr ? ((invMe || []) as InviteRow[]) : []);
+    } else {
+      setInvitesForMe([]);
+    }
+
+    // Invites for agency (incoming requests)
+    if (pr.account_type === "AGENCY" && pr.agency_id) {
+      const { data: invAg, error: invAgErr } = await supabase
+        .from("agency_invites")
+        .select("id, agency_id, email, token, status, created_at, created_by, accepted_at")
+        .eq("agency_id", pr.agency_id)
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false });
+
+      setInvitesForAgency(!invAgErr ? ((invAg || []) as InviteRow[]) : []);
+    } else {
+      setInvitesForAgency([]);
+    }
+
+    setLoading(false);
+  }
 
   useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        setLoading(true);
-
-        const { data: authData, error: authErr } = await supabase.auth.getUser();
-        if (authErr) throw authErr;
-        if (!authData?.user) {
-          router.push("/login");
-          return;
-        }
-
-        const user = authData.user;
-
-        // ✅ 1) PROFILE
-        // CHANGE ICI si ta table = "profiles" ou "users_profile"
-        const { data: prof, error: profErr } = await supabase
-          .from("users_profile")
-          .select("id, full_name, agency_id, account_type, created_at")
-          .eq("id", user.id)
-          .single();
-
-        // fallback si table vide au début
-        const p: ProfileRow = {
-          id: user.id,
-          full_name: (prof as any)?.full_name ?? user.user_metadata?.full_name ?? "",
-          email: user.email ?? "",
-          agency_id: (prof as any)?.agency_id ?? null,
-          account_type: (prof as any)?.account_type ?? user.user_metadata?.account_type ?? "AGENCY",
-          created_at: (prof as any)?.created_at ?? user.created_at ?? null,
-        };
-
-        // ✅ 2) AGENCY (si agence_id existe)
-        let a: AgencyRow | null = null;
-        if (p.agency_id) {
-          // CHANGE ICI: table agencies + colonnes
-          const { data: ag, error: agErr } = await supabase
-            .from("agencies")
-            .select("id, name, join_code, logo_url, brand_color")
-            .eq("id", p.agency_id)
-            .single();
-          if (agErr) throw agErr;
-          a = ag as any;
-        }
-
-        // ✅ 3) INVITATIONS (badge rouge)
-        // CHANGE ICI: table invitations + champs
-        const { count, error: invErr } = await supabase
-          .from("invitations")
-          .select("id", { count: "exact", head: true })
-          .eq("to_user_id", user.id)
-          .eq("status", "pending");
-        if (invErr) {
-          // si tu n’as pas encore la table → pas bloquant
-          // console.log(invErr.message);
-        }
-
-        if (!mounted) return;
-        setProfile(p);
-        setAgency(a);
-        setAgencyName(a?.name ?? "");
-        setPendingInvites(count ?? 0);
-      } catch (e: any) {
-        if (!mounted) return;
-        setToast({ type: "error", msg: e?.message ?? "Erreur chargement profil" });
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+    if (ran.current) return;
+    ran.current = true;
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function copy(text: string) {
+  function openEdit() {
+    setEditFullName(profile?.full_name ?? "");
+    setEditAvatarUrl(profile?.avatar_url ?? "");
+    setEditEmail(userEmail ?? "");
+    setEditAgencyName(agency?.name ?? "");
+    setEditOpen(true);
+  }
+
+  async function copyText(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setToast({ type: "success", msg: "Copié ✅" });
+      setToast({ type: "ok", msg: "Copié ✅" });
     } catch {
-      setToast({ type: "error", msg: "Impossible de copier" });
+      setToast({ type: "err", msg: "Impossible de copier." });
     }
   }
 
-  async function saveAgencyName() {
-    if (!agency?.id) return;
-    const name = agencyName.trim();
-    if (!name) {
-      setToast({ type: "error", msg: "Nom agence invalide" });
+  async function requestJoin() {
+    if (!joinCode.trim()) {
+      setToast({ type: "err", msg: "Entrez un code agence." });
       return;
     }
+    setJoinBusy(true);
     try {
-      setSaving(true);
-      setToast(null);
-
-      // CHANGE ICI: sécurité owner_id si tu veux verrouiller
-      const { error } = await supabase
-        .from("agencies")
-        .update({ name })
-        .eq("id", agency.id);
-
-      if (error) throw error;
-
-      setAgency((prev) => (prev ? { ...prev, name } : prev));
-      setEditAgency(false);
-      setToast({ type: "success", msg: "Nom agence mis à jour ✅" });
-    } catch (e: any) {
-      setToast({ type: "error", msg: e?.message ?? "Erreur update agence" });
+      const { error } = await supabase.rpc("request_join_agency", { p_code: joinCode.trim() });
+      if (error) {
+        setToast({ type: "err", msg: `Erreur: ${error.message}` });
+        return;
+      }
+      setJoinCode("");
+      setToast({ type: "ok", msg: "Demande envoyée ✅ (en attente)" });
+      await loadAll();
     } finally {
-      setSaving(false);
+      setJoinBusy(false);
     }
   }
 
-  async function setColor(color: string) {
-    if (!agency?.id) return;
+  async function acceptInviteForMe(token: string) {
+    const { error } = await supabase.rpc("accept_agency_invite", { p_token: token });
+    if (error) {
+      setToast({ type: "err", msg: `Impossible d’accepter: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Invitation acceptée ✅" });
+    await loadAll();
+  }
+
+  async function rejectInvite(inviteId: string) {
+    const { error } = await supabase.rpc("reject_agency_invite", { p_invite_id: inviteId });
+    if (error) {
+      setToast({ type: "err", msg: `Erreur: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Invitation refusée." });
+    await loadAll();
+  }
+
+  async function approveInviteForAgency(inviteId: string) {
+    const { error } = await supabase.rpc("approve_agency_invite", { p_invite_id: inviteId });
+    if (error) {
+      setToast({ type: "err", msg: `Erreur: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Membre ajouté ✅" });
+    await loadAll();
+  }
+
+  async function saveEdit() {
+    if (!profile) return;
+    setSaveBusy(true);
     try {
-      setSaving(true);
-      setToast(null);
+      // 1) update profile (name/avatar)
+      const { error: pErr } = await supabase
+        .from("users_profile")
+        .update({
+          full_name: editFullName.trim() || null,
+          avatar_url: editAvatarUrl.trim() || null,
+        })
+        .eq("user_id", profile.user_id);
 
-      const { error } = await supabase
-        .from("agencies")
-        .update({ brand_color: color })
-        .eq("id", agency.id);
+      if (pErr) {
+        setToast({ type: "err", msg: `Erreur profil: ${pErr.message}` });
+        return;
+      }
 
-      if (error) throw error;
+      // 2) update agency name (si AGENCY)
+      if (isAgency && profile.agency_id) {
+        const newName = editAgencyName.trim();
+        if (newName) {
+          const { error: aErr } = await supabase
+            .from("agencies")
+            .update({ name: newName })
+            .eq("id", profile.agency_id);
+          if (aErr) {
+            setToast({ type: "err", msg: `Erreur agence: ${aErr.message}` });
+            return;
+          }
+        }
+      }
 
-      setAgency((prev) => (prev ? { ...prev, brand_color: color } : prev));
-      setToast({ type: "success", msg: "Couleur enregistrée ✅" });
-    } catch (e: any) {
-      setToast({ type: "error", msg: e?.message ?? "Erreur couleur" });
+      // 3) update auth email (si changé)
+      const newEmail = editEmail.trim();
+      if (newEmail && newEmail !== (userEmail ?? "")) {
+        const { error: eErr } = await supabase.auth.updateUser({ email: newEmail });
+        if (eErr) {
+          setToast({ type: "err", msg: `Email: ${eErr.message}` });
+          return;
+        }
+        setToast({ type: "ok", msg: "Email modifié (vérifiez votre boîte mail)." });
+      } else {
+        setToast({ type: "ok", msg: "Modifications enregistrées ✅" });
+      }
+
+      setEditOpen(false);
+      await loadAll();
     } finally {
-      setSaving(false);
+      setSaveBusy(false);
     }
   }
 
-  async function uploadLogo(file: File) {
-    if (!agency?.id) return;
+  const headerTitle = useMemo(() => {
+    const full = profile?.full_name || "Mon profil";
+    const agencyName = agency?.name;
+    if (isAgency && agencyName) return agencyName;
+    return full;
+  }, [profile?.full_name, agency?.name, isAgency]);
 
-    try {
-      setSaving(true);
-      setToast(null);
+  const headerSubtitle = useMemo(() => {
+    const full = profile?.full_name || "";
+    const type = isAgency ? "Compte Agence" : "Social Manager";
+    if (isAgency) return `${type} • ${full || "Owner"}`;
+    return type;
+  }, [profile?.full_name, isAgency]);
 
-      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-      const path = `agency/${agency.id}.${ext}`;
-
-      // ✅ bucket conseillé: "public" ou "logos"
-      // CHANGE ICI: bucket name
-      const bucket = "logos";
-
-      const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(path, file, { upsert: true, cacheControl: "3600" });
-
-      if (upErr) throw upErr;
-
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-      const publicUrl = data.publicUrl;
-
-      // CHANGE ICI: colonne logo_url
-      const { error: dbErr } = await supabase
-        .from("agencies")
-        .update({ logo_url: publicUrl })
-        .eq("id", agency.id);
-
-      if (dbErr) throw dbErr;
-
-      setAgency((prev) => (prev ? { ...prev, logo_url: publicUrl } : prev));
-      setToast({ type: "success", msg: "Logo mis à jour ✅" });
-    } catch (e: any) {
-      setToast({ type: "error", msg: e?.message ?? "Erreur upload logo" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function signOut() {
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
-  if (loading) {
-    return (
-      <div className="profilePage">
-        <div className="profileShell">
-          <div className="profileCard p-6">
-            <div className="skeleton h-6 w-56" />
-            <div className="skeleton h-4 w-80 mt-4" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-6">
-              <div className="skeleton h-20" />
-              <div className="skeleton h-20" />
-              <div className="skeleton h-20" />
-              <div className="skeleton h-20" />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const initials =
-    (profile?.full_name?.trim()?.[0] || profile?.email?.trim()?.[0] || "U").toUpperCase();
-
-  const hasLogo = !!agency?.logo_url;
+  const inviteCount = isAgency ? invitesForAgency.length : invitesForMe.length;
 
   return (
-    <div className="profilePage">
-      <div className="profileShell">
-        {/* Header */}
-        <div className="profileHeader">
-          <div className="profileIdentity">
-            <div className="brandAvatar" style={{ background: brandColor }}>
-              {hasLogo ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={agency!.logo_url!} alt="Logo" className="brandAvatarImg" />
-              ) : (
-                <span className="brandAvatarTxt">{initials}</span>
-              )}
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="profileTitle">
-                  {profile?.full_name?.trim() ? profile?.full_name : "Votre profil"}
-                </h1>
-
-                <span className="pill">
-                  {String(profile?.account_type || "ACCOUNT").toUpperCase()}
-                </span>
-
-                {/* Notifications icon + badge rouge */}
-                <button
-                  type="button"
-                  className="iconBtn"
-                  onClick={() => router.push("/dashboard/notifications")}
-                  title="Notifications"
-                >
-                  <span className="iconBell">🔔</span>
-                  {pendingInvites > 0 && <span className="badgeDot" />}
-                </button>
-              </div>
-
-              <div className="profileMeta">
-                <span className="mono">{profile?.email}</span>
-                <span className="dotSep">•</span>
-                <span>Créé le {formatDate(profile?.created_at)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="profileHeaderActions">
-            <button className="btnGhost" onClick={() => router.push("/dashboard/notifications")}>
-              Ouvrir notifications
-              {pendingInvites > 0 && <span className="pillDanger ml-2">{pendingInvites}</span>}
-            </button>
-            <button className="btnDanger" onClick={signOut}>
-              Déconnexion
-            </button>
-          </div>
+    <div className="min-h-screen appShell">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={cn("toast", toast.type === "ok" ? "toastOk" : "toastErr")}>{toast.msg}</div>
         </div>
+      )}
 
-        {/* Main grid */}
-        <div className="profileGrid">
-          {/* LEFT: Agency */}
-          <div className="profileCard">
-            <div className="cardHead">
-              <div>
-                <div className="cardTitle">Agence</div>
-                <div className="cardDesc">Votre identité “vendable” : nom + logo + couleur.</div>
+      <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+        <div className="cardBig overflow-hidden">
+          <div className={cn("profileHero", isAgency ? "heroAgency" : "heroSm")}>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="avatarHero">{initials(isAgency ? agency?.name : profile?.full_name)}</div>
+                <div className="min-w-0">
+                  <div className="text-2xl font-semibold truncate">{headerTitle}</div>
+                  <div className="text-white/85 text-sm mt-1">{headerSubtitle}</div>
+                  {userEmail && <div className="text-white/75 text-xs mt-1 truncate">{userEmail}</div>}
+                </div>
               </div>
 
-              {!editAgency ? (
-                <button className="btn" onClick={() => setEditAgency(true)}>
-                  Modifier
+              <div className="flex gap-2">
+                <button onClick={openEdit} className="btnGlass">
+                  ✏️ Modifier profil
                 </button>
-              ) : (
-                <div className="flex gap-2">
-                  <button className="btn" disabled={saving} onClick={saveAgencyName}>
-                    {saving ? "En cours..." : "Enregistrer"}
-                  </button>
-                  <button
-                    className="btnGhost"
-                    onClick={() => {
-                      setEditAgency(false);
-                      setAgencyName(agency?.name ?? "");
-                    }}
-                  >
-                    Annuler
-                  </button>
-                </div>
-              )}
+                <button onClick={() => loadAll()} className="btnGlass">
+                  ⟳ Actualiser
+                </button>
+              </div>
             </div>
+          </div>
 
-            <div className="cardBody">
-              <div className="fieldGrid">
-                <div className="field">
-                  <label>Nom de l’agence</label>
-                  {!editAgency ? (
-                    <div className="valueBox">{agency?.name || "—"}</div>
-                  ) : (
+          <div className="p-6 sm:p-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Accès agence */}
+              <div className="card p-5">
+                <div className="text-sm font-semibold">Accès agence</div>
+                <div className="text-sm text-slate-600 mt-1">
+                  {isAgency ? "Votre ID agence à partager." : "Rejoindre une agence via code (demande en attente)."}
+                </div>
+
+                {isAgency ? (
+                  <div className="mt-4 flex items-center gap-2">
+                    <div className="pill flex-1">
+                      ID Agence: <span className="font-medium">{profile?.agency_id ?? "—"}</span>
+                    </div>
+                    <button
+                      onClick={() => profile?.agency_id && copyText(profile.agency_id)}
+                      className="btnSoft"
+                    >
+                      Copier
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-4 flex items-center gap-2">
                     <input
-                      className="inputLux"
-                      value={agencyName}
-                      onChange={(e) => setAgencyName(e.target.value)}
-                      placeholder="Ex: Jadoline Agency"
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value)}
+                      placeholder="Code agence (join_code)"
+                      className="input"
                     />
+                    <button onClick={requestJoin} disabled={joinBusy} className="btnPrimary">
+                      {joinBusy ? "..." : "Rejoindre"}
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-4 text-xs text-slate-500">
+                  Astuce: on recommande d’utiliser le <b>join_code</b> au lieu du UUID.
+                </div>
+              </div>
+
+              {/* Invitations */}
+              <div className="card p-5 lg:col-span-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold">Invitations</div>
+                    <div className="text-sm text-slate-600 mt-1">
+                      {isAgency
+                        ? "Demandes reçues pour rejoindre votre agence."
+                        : "Invitations reçues pour rejoindre une agence."}
+                    </div>
+                  </div>
+                  <span className="badgeCount">{inviteCount}</span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {inviteCount === 0 ? (
+                    <div className="emptyBox">Aucune invitation en attente.</div>
+                  ) : (
+                    (isAgency ? invitesForAgency : invitesForMe).map((inv) => (
+                      <div key={inv.id} className="inviteCard">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{inv.email}</div>
+                            <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            {isAgency ? (
+                              <>
+                                <button onClick={() => approveInviteForAgency(inv.id)} className="btnOk">
+                                  Accepter
+                                </button>
+                                <button onClick={() => rejectInvite(inv.id)} className="btnDanger">
+                                  Refuser
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => acceptInviteForMe(inv.token)} className="btnOk">
+                                  Accepter
+                                </button>
+                                <button onClick={() => rejectInvite(inv.id)} className="btnDanger">
+                                  Refuser
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {!isAgency && (
+                          <div className="mt-3 text-xs text-slate-500">
+                            (Vous pouvez aussi accepter via le lien <b>/invite?token=…</b>)
+                          </div>
+                        )}
+                      </div>
+                    ))
                   )}
                 </div>
-
-                <div className="field">
-                  <label>ID agence</label>
-                  <div className="valueRow">
-                    <div className="valueBox mono">{agency?.id || "—"}</div>
-                    {agency?.id && (
-                      <button className="miniBtn" onClick={() => copy(agency.id)}>
-                        Copier
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Code invitation</label>
-                  <div className="valueRow">
-                    <div className="valueBox mono">{agency?.join_code || "—"}</div>
-                    {agency?.join_code && (
-                      <button className="miniBtn" onClick={() => copy(agency.join_code!)}>
-                        Copier
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Logo</label>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) uploadLogo(f);
-                        if (fileRef.current) fileRef.current.value = "";
-                      }}
-                    />
-                    <button className="btn" onClick={() => fileRef.current?.click()} disabled={saving}>
-                      {saving ? "Upload..." : "Uploader logo"}
-                    </button>
-
-                    {!hasLogo && (
-                      <span className="hint">
-                        Pas de logo ? Choisissez une couleur (bouton ci-dessous).
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Couleur (si pas de logo)</label>
-                  <div className="colorRow">
-                    {COLORS.map((c) => (
-                      <button
-                        key={c}
-                        className={clsx("colorDot", agency?.brand_color === c && "active")}
-                        style={{ background: c }}
-                        onClick={() => setColor(c)}
-                        title={c}
-                        type="button"
-                        disabled={saving}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* RIGHT: Account */}
-          <div className="profileCard">
-            <div className="cardHead">
-              <div>
-                <div className="cardTitle">Compte</div>
-                <div className="cardDesc">Infos utilisateur (email en lecture).</div>
               </div>
             </div>
 
-            <div className="cardBody">
-              <div className="fieldGrid">
-                <div className="field">
-                  <label>Nom</label>
-                  <div className="valueBox">{profile?.full_name || "—"}</div>
+            {/* Bottom */}
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="card p-5">
+                <div className="text-sm font-semibold">Type de compte</div>
+                <div className="mt-2 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm">
+                  <span>{isAgency ? "🏢 Agence" : "👤 Social Manager"}</span>
+                  {profile?.role ? <span className="text-slate-600">• {profile.role}</span> : null}
                 </div>
 
-                <div className="field">
-                  <label>Email</label>
-                  <div className="valueBox mono">{profile?.email || "—"}</div>
+                <div className="mt-4 text-sm text-slate-600">
+                  {isAgency
+                    ? "Vous gérez les demandes d’accès ici via Invitations."
+                    : "Vos collaborations seront visibles dans la page Récap."}
                 </div>
 
-                <div className="field">
-                  <label>Type</label>
-                  <div className="valueBox">
-                    <span className="pill">{String(profile?.account_type || "ACCOUNT").toUpperCase()}</span>
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Invitations</label>
-                  <div className="valueBox">
-                    {pendingInvites > 0 ? (
-                      <span className="pillDanger">En attente: {pendingInvites}</span>
-                    ) : (
-                      <span className="pillOk">Aucune</span>
-                    )}
-                  </div>
+                <div className="mt-5 flex gap-2">
+                  <button onClick={() => router.push("/recap")} className="btnSoft">
+                    Aller à Récap
+                  </button>
+                  <button onClick={() => router.push("/dashboard")} className="btnSoft">
+                    Dashboard
+                  </button>
                 </div>
               </div>
 
-              <div className="divider" />
+              <div className="card p-5 lg:col-span-2">
+                <div className="text-sm font-semibold">Résumé</div>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="statCard">
+                    <div className="text-xs text-slate-500">Invitations en attente</div>
+                    <div className="text-2xl font-semibold mt-1">{inviteCount}</div>
+                  </div>
+                  <div className="statCard">
+                    <div className="text-xs text-slate-500">Agence liée</div>
+                    <div className="text-sm font-medium mt-2 truncate">{agency?.name ?? "—"}</div>
+                  </div>
+                  <div className="statCard">
+                    <div className="text-xs text-slate-500">Identifiant</div>
+                    <div className="text-sm font-medium mt-2 truncate">{profile?.user_id ?? "—"}</div>
+                  </div>
+                </div>
 
-              <div className="quickActions">
-                <button className="btnGhost" onClick={() => router.push("/dashboard/notifications")}>
-                  Gérer invitations / notifications
-                </button>
-                <button className="btn" onClick={() => copy(profile?.id || "")} disabled={!profile?.id}>
-                  Copier mon User ID
-                </button>
+                {loading && <div className="mt-4 text-sm text-slate-600">Chargement…</div>}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Toast */}
-        {toast && (
-          <div className={clsx("toast", toast.type === "success" ? "toastOk" : "toastErr")}>
-            {toast.msg}
-            <button className="toastX" onClick={() => setToast(null)} aria-label="close">
-              ✕
-            </button>
+        {/* MODAL */}
+        {editOpen && (
+          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4">
+            <div className="modalBox">
+              <div className="modalHead">
+                <div>
+                  <div className="text-lg font-semibold">Modifier profil</div>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Nom, email, avatar{isAgency ? ", agence" : ""}
+                  </div>
+                </div>
+                <button onClick={() => setEditOpen(false)} className="btnSoft">
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Nom du profil</label>
+                  <input
+                    value={editFullName}
+                    onChange={(e) => setEditFullName(e.target.value)}
+                    className="input mt-2"
+                    placeholder="Votre nom"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium">Email</label>
+                  <input
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="input mt-2"
+                    placeholder="email@exemple.com"
+                  />
+                  <div className="text-xs text-slate-500 mt-2">
+                    Si l’email change, Supabase peut demander une confirmation.
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium">Avatar URL</label>
+                  <input
+                    value={editAvatarUrl}
+                    onChange={(e) => setEditAvatarUrl(e.target.value)}
+                    className="input mt-2"
+                    placeholder="https://..."
+                  />
+                </div>
+
+                {isAgency && (
+                  <div>
+                    <label className="text-sm font-medium">Nom de l’agence</label>
+                    <input
+                      value={editAgencyName}
+                      onChange={(e) => setEditAgencyName(e.target.value)}
+                      className="input mt-2"
+                      placeholder="Nom agence"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="modalFoot">
+                <button onClick={() => setEditOpen(false)} className="btnSoft">
+                  Annuler
+                </button>
+                <button onClick={saveEdit} disabled={saveBusy} className="btnPrimary">
+                  {saveBusy ? "Enregistrement..." : "Enregistrer"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
