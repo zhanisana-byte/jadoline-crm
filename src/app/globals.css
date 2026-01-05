@@ -2,9 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* =========================================================
-   THEME
-========================================================= */
 :root{
   --ring: rgba(99,102,241,.18);
   --shadow: 0 14px 40px rgba(2, 6, 23, .10);
@@ -20,27 +17,17 @@ body{
     linear-gradient(180deg, #f7f9ff 0%, #eef2ff 55%, #f8fafc 100%);
 }
 
-/* Liens */
 a{ @apply text-indigo-600 hover:underline; }
 
-/* Titres */
 h1{
   @apply text-3xl font-semibold text-slate-900;
   letter-spacing:-0.03em;
 }
-h2{
-  @apply text-xl font-semibold text-slate-900;
-  letter-spacing:-0.02em;
-}
-
 label{ @apply block text-sm font-medium text-slate-700 mb-1; }
 .muted{ @apply text-sm text-slate-500; }
-
 .container{ @apply max-w-7xl mx-auto px-4; }
 
-/* =========================================================
-   CARDS
-========================================================= */
+/* Cards */
 .card{
   @apply rounded-2xl border border-slate-200/70 bg-white/80;
   position: relative;
@@ -66,25 +53,17 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   pointer-events:none;
   opacity:.55;
 }
-.card > *{
-  position: relative;
-  z-index: 1;
-}
+.card > *{ position: relative; z-index: 1; }
 .card:hover{
   transform: translateY(-2px);
   border-color: rgba(99,102,241,.35);
   box-shadow: var(--shadow2);
 }
-.card-title{
-  @apply text-lg font-semibold text-slate-900;
-}
+.card-title{ @apply text-lg font-semibold text-slate-900; }
 
-/* =========================================================
-   INPUTS
-========================================================= */
+/* Inputs */
 .input{
-  @apply w-full rounded-xl border border-slate-200/80 px-3 py-2
-         text-sm text-slate-900 outline-none transition;
+  @apply w-full rounded-xl border border-slate-200/80 px-3 py-2 text-sm text-slate-900 outline-none transition;
   background: rgba(255,255,255,.85);
 }
 .input::placeholder{ @apply text-slate-400; }
@@ -92,13 +71,9 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   @apply border-indigo-400;
   box-shadow: 0 0 0 4px var(--ring);
 }
-.input:disabled{
-  @apply bg-slate-100 cursor-not-allowed opacity-70;
-}
+.input:disabled{ @apply bg-slate-100 cursor-not-allowed opacity-70; }
 
-/* =========================================================
-   BUTTONS
-========================================================= */
+/* Buttons */
 .btn{
   @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2
          text-sm font-semibold transition disabled:opacity-60 disabled:cursor-not-allowed;
@@ -116,13 +91,9 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   @apply text-slate-700;
   background: rgba(2,6,23,.04);
 }
-.btn-ghost:hover{
-  background: rgba(2,6,23,.06);
-}
+.btn-ghost:hover{ background: rgba(2,6,23,.06); }
 
-/* =========================================================
-   ALERTS
-========================================================= */
+/* Alerts */
 .alert{
   margin-top:14px;
   padding:12px 14px;
@@ -141,9 +112,7 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   color:#14532d;
 }
 
-/* =========================================================
-   TIP BOX
-========================================================= */
+/* Tip box */
 .tip-box{
   border:1px solid rgba(226,232,240,.9);
   background:linear-gradient(135deg, rgba(99,102,241,.10), rgba(59,130,246,.08));
@@ -152,50 +121,27 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   box-shadow: 0 10px 24px rgba(2,6,23,.06);
 }
 
-/* =========================================================
-   PROFILE PREMIUM
-========================================================= */
+/* Profile */
 .profileTop{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:18px;
-  flex-wrap:wrap;
+  display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap;
 }
 .profileLeft{
-  display:flex;
-  align-items:center;
-  gap:16px;
-  min-width:0;
+  display:flex; align-items:center; gap:16px; min-width:0;
 }
 .avatarCircle{
-  width:72px;
-  height:72px;
-  border-radius:999px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-weight:800;
-  letter-spacing:.5px;
+  width:72px; height:72px; border-radius:999px;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:800; letter-spacing:.5px;
   color:#0f172a;
   background:linear-gradient(180deg, rgba(59,130,246,.18), rgba(2,6,23,.05));
   border:1px solid rgba(226,232,240,.9);
 }
 .profileName{
-  font-size:26px;
-  font-weight:800;
-  color:#0f172a;
-  line-height:1.1;
+  font-size:26px; font-weight:800; color:#0f172a; line-height:1.1;
 }
-.profileEmail{
-  margin-top:6px;
-  color:#475569;
-}
-.profileActions{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
+.profileEmail{ margin-top:6px; color:#475569; }
+.profileActions{ display:flex; gap:10px; flex-wrap:wrap; }
+
 .idRow{
   display:grid;
   grid-template-columns: 1fr auto;
@@ -203,17 +149,11 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   align-items:center;
 }
 
-/* =========================================================
-   BADGES
-========================================================= */
+/* Badges */
 .badge{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  border-radius:999px;
-  padding:6px 10px;
-  font-size:12px;
-  font-weight:800;
+  display:inline-flex; align-items:center; gap:6px;
+  border-radius:999px; padding:6px 10px;
+  font-size:12px; font-weight:800;
   border:1px solid rgba(226,232,240,.9);
 }
 .badge-gold{
@@ -232,14 +172,16 @@ label{ @apply block text-sm font-medium text-slate-700 mb-1; }
   color:#3730a3;
 }
 
-/* =========================================================
-   AUTH WRAP (si vous réutilisez)
-========================================================= */
-.auth-wrap{ @apply min-h-screen flex items-center justify-center px-4 py-12; }
-.auth-card{ @apply w-full max-w-md sm:max-w-lg; }
-.auth-card-inner{ @apply p-6 sm:p-8; }
-.auth-title{
-  @apply text-3xl font-semibold tracking-tight text-slate-900;
-  letter-spacing:-0.03em;
+/* Invites list rows */
+.inviteRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border:1px solid rgba(226,232,240,.8);
+  background: rgba(255,255,255,.6);
+  border-radius: 16px;
+  padding: 10px 12px;
 }
-.auth-subtitle{ @apply mt-1 text-sm text-slate-500; }
+.inviteEmail{ font-weight:700; color:#0f172a; }
+.inviteMeta{ font-size:12px; }
