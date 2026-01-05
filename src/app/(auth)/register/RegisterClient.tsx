@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -19,7 +19,16 @@ export default function RegisterClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  // 🔹 RESET agencyId quand on change de type
+  useEffect(() => {
+    setAgencyId("");
+  }, [type]);
+
   const submit = async () => {
+    if (!fullName || !email || !password) return;
+
+    if (type === "AGENCY" && !agencyName) return;
+
     setLoading(true);
 
     const { error } = await supabase.auth.signUp({
@@ -30,7 +39,8 @@ export default function RegisterClient() {
           full_name: fullName,
           account_type: type,
           agency_name: type === "AGENCY" ? agencyName : null,
-          join_agency_id: type === "SOCIAL_MANAGER" ? agencyId || null : null,
+          join_agency_id:
+            type === "SOCIAL_MANAGER" && agencyId ? agencyId : null,
         },
         emailRedirectTo: `${location.origin}/auth/callback`,
       },
@@ -41,47 +51,44 @@ export default function RegisterClient() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-blue-50 px-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-8 space-y-8">
+    <div className="register-bg">
+      <div className="register-card">
 
         {/* HEADER */}
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-semibold">Créer un compte Jadoline</h1>
-          <p className="text-gray-500 text-sm">
-            CRM professionnel multi-agence
-          </p>
-        </div>
+        <h1 className="register-title">Créer un compte Jadoline</h1>
+        <p className="register-subtitle">CRM professionnel multi-agence</p>
 
-        {/* TYPE SWITCH */}
-        <div className="grid grid-cols-2 bg-gray-100 rounded-xl p-1">
+        {/* SWITCH */}
+        <div className="account-switch">
           <button
+            type="button"
+            className={type === "AGENCY" ? "active" : ""}
             onClick={() => setType("AGENCY")}
-            className={`py-2 rounded-lg text-sm font-medium transition ${
-              type === "AGENCY"
-                ? "bg-white shadow text-indigo-600"
-                : "text-gray-500"
-            }`}
           >
             Agence
           </button>
-
           <button
+            type="button"
+            className={type === "SOCIAL_MANAGER" ? "active" : ""}
             onClick={() => setType("SOCIAL_MANAGER")}
-            className={`py-2 rounded-lg text-sm font-medium transition ${
-              type === "SOCIAL_MANAGER"
-                ? "bg-white shadow text-indigo-600"
-                : "text-gray-500"
-            }`}
           >
             Social Manager
           </button>
         </div>
 
         {/* FORM */}
-        <div className="space-y-4">
+        <form
+          className="register-form"
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
           <input
             className="input"
             placeholder="Nom complet"
+            autoComplete="off"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
           />
@@ -90,6 +97,7 @@ export default function RegisterClient() {
             <input
               className="input"
               placeholder="Nom de l’agence"
+              autoComplete="off"
               value={agencyName}
               onChange={(e) => setAgencyName(e.target.value)}
             />
@@ -99,6 +107,7 @@ export default function RegisterClient() {
             <input
               className="input"
               placeholder="Agency ID (optionnel)"
+              autoComplete="off"
               value={agencyId}
               onChange={(e) => setAgencyId(e.target.value)}
             />
@@ -106,36 +115,36 @@ export default function RegisterClient() {
 
           <input
             className="input"
+            type="email"
             placeholder="Email professionnel"
+            autoComplete="new-email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
 
           <input
-            type="password"
             className="input"
+            type="password"
             placeholder="Mot de passe"
+            autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-        </div>
 
-        {/* SUBMIT */}
-        <button
-          onClick={submit}
-          disabled={loading}
-          className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition"
-        >
-          Créer mon compte
-        </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="register-btn"
+          >
+            {loading ? "Création..." : "Créer mon compte"}
+          </button>
+        </form>
 
         {/* FOOTER */}
-        <p className="text-center text-sm text-gray-500">
-          Déjà un compte ?{" "}
-          <a href="/login" className="text-indigo-600 hover:underline">
-            Connexion
-          </a>
-        </p>
+        <div className="register-footer">
+          Déjà un compte ? <a href="/login">Connexion</a>
+        </div>
+
       </div>
     </div>
   );
