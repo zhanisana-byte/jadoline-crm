@@ -1,76 +1,214 @@
+// src/app/profile/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+import JoinAgencyCard from "@/components/profile/JoinAgencyCard";
+import MonAgencyCard from "@/components/profile/MonAgencyCard";
+import ProfileInfoCard from "@/components/profile/ProfileInfoCard";
+import QuickRecapCard from "@/components/profile/QuickRecapCard";
+import WorkspaceCard from "@/components/profile/WorkspaceCard";
+
+type ProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  agency_id: string | null;
+  role: string | null;
+  created_at: string | null;
+  avatar_url: string | null;
+  account_type: "AGENCY" | "SOCIAL_MANAGER" | null;
+};
+
+function cn(...cls: (string | false | null | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
+}
+
+function initials(name?: string | null) {
+  const n = (name ?? "").trim();
+  if (!n) return "U";
+  const parts = n.split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]?.toUpperCase()).join("") || "U";
+}
+
 export default function ProfilePage() {
-  const supabase = createClient();
-  const [profile, setProfile] = useState<any>(null);
+  const supabase = useMemo(() => createClient(), []);
+
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [email, setEmail] = useState<string>("");
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      setLoading(true);
+      setErr(null);
 
-      if (!user) return;
+      try {
+        const { data: uRes, error: uErr } = await supabase.auth.getUser();
+        if (uErr) throw uErr;
 
-      const { data } = await supabase
-        .from("users_profile")
-        .select("*")
-        .eq("user_id", user.id)
-        .single();
+        const user = uRes.user;
+        if (!user) {
+          setErr("Vous devez être connecté(e).");
+          setProfile(null);
+          return;
+        }
 
-      setProfile(data);
-      setLoading(false);
+        setEmail(user.email ?? "");
+
+        const { data, error } = await supabase
+          .from("users_profile")
+          .select("user_id, full_name, agency_id, role, created_at, avatar_url, account_type")
+          .eq("user_id", user.id)
+          .single();
+
+        if (error) throw error;
+
+        setProfile({
+          user_id: String(data.user_id),
+          full_name: data.full_name ?? null,
+          agency_id: data.agency_id ?? null,
+          role: data.role ?? null,
+          created_at: data.created_at ?? null,
+          avatar_url: data.avatar_url ?? null,
+          account_type: (data.account_type ?? null) as any,
+        });
+      } catch (e: any) {
+        setErr(e?.message ?? "Une erreur est survenue.");
+        setProfile(null);
+      } finally {
+        setLoading(false);
+      }
     };
 
     load();
-  }, []);
+  }, [supabase]);
 
   if (loading) return null;
-  if (!profile) return <div>Aucun profil</div>;
+
+  if (err) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          {err}
+        </div>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-4">
+          Aucun profil.
+        </div>
+      </div>
+    );
+  }
+
+  const accountLabel =
+    profile.account_type === "AGENCY"
+      ? "AGENCE"
+      : profile.account_type === "SOCIAL_MANAGER"
+      ? "SOCIAL MANAGER"
+      : "COMPTE";
+
+  const myAgencyId = profile.agency_id ?? null;
 
   return (
-    <div className="max-w-3xl mx-auto p-8 space-y-6">
-      <h1 className="text-2xl font-bold">Profil</h1>
+    <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+      {/* HEADER */}
+      <div className="card p-6">
+        <div className="profileTop">
+          <div className="profileLeft">
+            {/* Avatar */}
+            {profile.avatar_url ? (
+              <img
+                src={profile.avatar_url}
+                alt="Avatar"
+                className="w-[72px] h-[72px] rounded-full object-cover border border-slate-200"
+              />
+            ) : (
+              <div className="avatarCircle">{initials(profile.full_name)}</div>
+            )}
 
-      {/* COMMUN */}
-      <div className="card">
-        <p className="text-sm text-gray-500">Nom complet</p>
-        <p className="font-medium">{profile.full_name}</p>
-      </div>
+            {/* Infos */}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="profileName truncate">
+                  {profile.full_name ?? "Utilisateur"}
+                </div>
 
-      <div className="card">
-        <p className="text-sm text-gray-500">Type de compte</p>
-        <p className="font-medium">{profile.account_type}</p>
-      </div>
+                <span
+                  className={cn(
+                    "badge",
+                    profile.account_type === "AGENCY" ? "badge-info" : "badge-success"
+                  )}
+                >
+                  {accountLabel}
+                </span>
 
-      {/* AGENCY */}
-      {profile.account_type === "AGENCY" && (
-        <>
-          <div className="card">
-            <p className="text-sm text-gray-500">Nom de l’agence</p>
-            <p className="font-medium">{profile.agency_name}</p>
+                {profile.role ? (
+                  <span className="badge border-slate-200 bg-white text-slate-700">
+                    {String(profile.role)}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="profileEmail truncate">{email || "—"}</div>
+            </div>
           </div>
 
-          <div className="card">
-            <p className="text-sm text-gray-500">Agency ID</p>
-            <p className="font-mono text-indigo-600">
-              {profile.agency_id}
-            </p>
+          {/* Bouton Notifications */}
+          <div className="flex items-center gap-2">
+            <Link
+              href="/notifications"
+              className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-800"
+            >
+              Notifications
+            </Link>
           </div>
-        </>
-      )}
-
-      {/* SOCIAL MANAGER */}
-      {profile.account_type === "SOCIAL_MANAGER" && (
-        <div className="card">
-          <p className="text-sm text-gray-500">Agences liées</p>
-          <p className="font-medium">Accès selon permissions</p>
         </div>
-      )}
+      </div>
+
+      {/* GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* LEFT */}
+        <div className="space-y-6">
+          <ProfileInfoCard
+            profile={{
+              full_name: profile.full_name,
+              created_at: profile.created_at,
+            }}
+            email={email}
+          />
+
+          {/* Social Manager: Join agency visible */}
+          {profile.account_type === "SOCIAL_MANAGER" && <JoinAgencyCard />}
+
+          {/* Quick recap (facultatif) */}
+          <QuickRecapCard />
+        </div>
+
+        {/* RIGHT */}
+        <div className="space-y-6">
+          {/* Agency: show My Agency */}
+          {profile.account_type === "AGENCY" && <MonAgencyCard myAgencyId={myAgencyId} />}
+
+          {/* Work = agences associées / collaborations (tous les comptes) */}
+          <WorkspaceCard myAgencyId={myAgencyId} />
+
+          {/* Social Manager: aussi montrer "Mon agence" si vous voulez (optionnel)
+              => si vous ne voulez PAS, supprimez ce bloc
+          */}
+          {profile.account_type === "SOCIAL_MANAGER" && myAgencyId && (
+            <MonAgencyCard myAgencyId={myAgencyId} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
