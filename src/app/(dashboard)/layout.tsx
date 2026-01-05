@@ -1,12 +1,5 @@
-import Sidebar from "@/components/Sidebar";
+import type { ReactNode } from "react";
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="dashboard-layout">
-      <div className="dashboard-container">
-        <Sidebar />
-        <main className="dashboard-main">{children}</main>
-      </div>
-    </div>
-  );
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }
