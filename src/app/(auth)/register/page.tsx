@@ -1,5 +1,10 @@
-import RegisterClient from "./RegisterClient";
+// app/(auth)/layout.tsx
+import "@/app/auth.css";
 
-export default function Page() {
-  return <RegisterClient />;
+export default function AuthLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="auth-page">
+      <div className="auth-wrap">{children}</div>
+    </div>
+  );
 }
