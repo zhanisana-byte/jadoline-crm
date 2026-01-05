@@ -359,6 +359,7 @@ body{
   border: 1px solid var(--crm-border);
   background: var(--crm-card);
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .crm-card-soft{
@@ -390,6 +391,7 @@ body{
 .crm-hero-agency{
   background: linear-gradient(90deg, #0b1222 0%, #111827 55%, #070d18 100%);
 }
+
 .crm-hero-sm{
   background: linear-gradient(90deg, rgba(15,23,42,.95), rgba(2,6,23,.96));
 }
@@ -406,6 +408,13 @@ body{
   background: rgba(255,255,255,.14);
   border: 1px solid rgba(255,255,255,.22);
   box-shadow: 0 16px 34px rgba(0,0,0,.22);
+  overflow: hidden;
+}
+.crm-avatar img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display:block;
 }
 
 .crm-btn-glass{
@@ -420,6 +429,7 @@ body{
   font-size: 13px;
   font-weight: 900;
   transition: .18s ease;
+  color: #fff;
 }
 .crm-btn-glass:hover{
   background: rgba(255,255,255,.16);
@@ -458,6 +468,7 @@ body{
   transition: .18s ease;
   position: relative;
   overflow:hidden;
+  border: 1px solid rgba(255,255,255,.10);
 }
 .crm-btn-primary::before{
   content:"";
@@ -471,7 +482,7 @@ body{
   transform: translateY(-1px);
   box-shadow: 0 24px 55px rgba(2,6,23,.20);
 }
-.crm-btn-primary:disabled{ opacity: .60; }
+.crm-btn-primary:disabled{ opacity: .60; cursor: not-allowed; transform:none; }
 
 .crm-btn-soft{
   height: 46px;
@@ -482,6 +493,7 @@ body{
   border: 1px solid rgba(148,163,184,.30);
   background: rgba(255,255,255,.82);
   transition: .18s ease;
+  color: #0b1222;
 }
 .crm-btn-soft:hover{
   background: rgba(255,255,255,.95);
@@ -498,6 +510,7 @@ body{
   background: linear-gradient(180deg, #059669, #047857);
   box-shadow: 0 16px 34px rgba(5,150,105,.18);
   transition: .18s ease;
+  border: 1px solid rgba(255,255,255,.12);
 }
 .crm-btn-ok:hover{ transform: translateY(-1px); }
 
@@ -511,6 +524,7 @@ body{
   background: linear-gradient(180deg, #ef4444, #b91c1c);
   box-shadow: 0 16px 34px rgba(239,68,68,.16);
   transition: .18s ease;
+  border: 1px solid rgba(255,255,255,.12);
 }
 .crm-btn-danger:hover{ transform: translateY(-1px); }
 
@@ -529,6 +543,7 @@ body{
   padding: 6px 10px;
   background: rgba(15,23,42,.06);
   border: 1px solid rgba(148,163,184,.22);
+  color: #0b1222;
 }
 
 .crm-empty{
@@ -549,6 +564,13 @@ body{
   box-shadow: 0 12px 30px rgba(2,6,23,.06);
 }
 
+/* Divider helper */
+.crm-divider{
+  height: 1px;
+  background: rgba(148,163,184,.22);
+  margin: 14px 0;
+}
+
 /* MODAL */
 .crm-modal{
   width: 100%;
@@ -567,6 +589,7 @@ body{
   display:flex;
   align-items:center;
   justify-content:space-between;
+  gap: 12px;
 }
 
 .crm-modal-foot{
@@ -575,6 +598,7 @@ body{
   display:flex;
   align-items:center;
   justify-content:space-between;
+  gap: 12px;
 }
 
 /* TOAST */
@@ -594,4 +618,13 @@ body{
 .crm-toast-err{
   border-color: rgba(239,68,68,.22);
   color: #b91c1c;
+}
+
+/* Responsive tweaks */
+@media (max-width: 640px){
+  .crm-container{ padding: 18px 12px; }
+  .crm-hero{ padding: 22px 16px; }
+  .crm-card{ border-radius: 22px; }
+  .crm-card-soft{ border-radius: 18px; }
+  .crm-avatar{ width: 54px; height: 54px; font-size: 16px; }
 }
