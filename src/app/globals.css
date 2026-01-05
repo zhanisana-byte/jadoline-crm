@@ -9,6 +9,12 @@
   --ring: rgba(186, 134, 52, .20); /* gold ring */
   --shadow: 0 18px 55px rgba(2, 6, 23, .12);
   --shadow2: 0 26px 80px rgba(2, 6, 23, .16);
+
+  /* CRM tokens */
+  --crm-ring: rgba(186, 134, 52, .18);
+  --crm-card: rgba(255,255,255,.92);
+  --crm-border: rgba(148,163,184,.28);
+  --crm-soft: rgba(15,23,42,.05);
 }
 
 /* =========================================================
@@ -333,5 +339,259 @@ body{
   }
 }
 
+/* =========================================================
+   CRM – GLOBAL (SAFE, NO CONFLICT)
+   NOTE: we use crm-* classes so we don't override .input auth
+========================================================= */
 
+.crm-shell{
+  min-height: 100vh;
+}
 
+.crm-container{
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.crm-card{
+  border-radius: 28px;
+  border: 1px solid var(--crm-border);
+  background: var(--crm-card);
+  box-shadow: var(--shadow);
+}
+
+.crm-card-soft{
+  border-radius: 20px;
+  border: 1px solid rgba(148,163,184,.22);
+  background: rgba(255,255,255,.82);
+  box-shadow: 0 12px 30px rgba(2,6,23,.06);
+}
+
+.crm-hero{
+  padding: 26px 22px;
+  border-bottom: 1px solid rgba(255,255,255,.14);
+  color: #fff;
+  position: relative;
+  overflow:hidden;
+}
+
+.crm-hero::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  background:
+    radial-gradient(520px 160px at 18% 0%, rgba(186,134,52,.28), transparent 60%),
+    radial-gradient(700px 220px at 85% 20%, rgba(2,132,199,.18), transparent 62%);
+  opacity: .9;
+  pointer-events:none;
+}
+
+.crm-hero-agency{
+  background: linear-gradient(90deg, #0b1222 0%, #111827 55%, #070d18 100%);
+}
+.crm-hero-sm{
+  background: linear-gradient(90deg, rgba(15,23,42,.95), rgba(2,6,23,.96));
+}
+
+.crm-avatar{
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight: 900;
+  font-size: 18px;
+  background: rgba(255,255,255,.14);
+  border: 1px solid rgba(255,255,255,.22);
+  box-shadow: 0 16px 34px rgba(0,0,0,.22);
+}
+
+.crm-btn-glass{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.22);
+  font-size: 13px;
+  font-weight: 900;
+  transition: .18s ease;
+}
+.crm-btn-glass:hover{
+  background: rgba(255,255,255,.16);
+  transform: translateY(-1px);
+}
+
+.crm-input{
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(148,163,184,.36);
+  padding: 12px 12px;
+  font-size: 13px;
+  color: #0b1222;
+  outline: none;
+  transition: .18s ease;
+  background: rgba(255,255,255,.92);
+  box-shadow: 0 8px 22px rgba(2,6,23,.05);
+}
+.crm-input::placeholder{
+  color: rgba(100,116,139,.72);
+}
+.crm-input:focus{
+  border-color: rgba(186,134,52,.55);
+  box-shadow: 0 0 0 4px var(--crm-ring), 0 10px 28px rgba(2,6,23,.08);
+}
+
+.crm-btn-primary{
+  height: 46px;
+  border-radius: 16px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(90deg, #0b1222 0%, #111827 55%, #070d18 100%);
+  box-shadow: 0 18px 38px rgba(2,6,23,.16);
+  transition: .18s ease;
+  position: relative;
+  overflow:hidden;
+}
+.crm-btn-primary::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  background: radial-gradient(420px 120px at 20% 0%, rgba(186,134,52,.32), transparent 60%);
+  opacity: .85;
+  pointer-events:none;
+}
+.crm-btn-primary:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 24px 55px rgba(2,6,23,.20);
+}
+.crm-btn-primary:disabled{ opacity: .60; }
+
+.crm-btn-soft{
+  height: 46px;
+  border-radius: 16px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 900;
+  border: 1px solid rgba(148,163,184,.30);
+  background: rgba(255,255,255,.82);
+  transition: .18s ease;
+}
+.crm-btn-soft:hover{
+  background: rgba(255,255,255,.95);
+  transform: translateY(-1px);
+}
+
+.crm-btn-ok{
+  height: 42px;
+  border-radius: 14px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(180deg, #059669, #047857);
+  box-shadow: 0 16px 34px rgba(5,150,105,.18);
+  transition: .18s ease;
+}
+.crm-btn-ok:hover{ transform: translateY(-1px); }
+
+.crm-btn-danger{
+  height: 42px;
+  border-radius: 14px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(180deg, #ef4444, #b91c1c);
+  box-shadow: 0 16px 34px rgba(239,68,68,.16);
+  transition: .18s ease;
+}
+.crm-btn-danger:hover{ transform: translateY(-1px); }
+
+.crm-pill{
+  border-radius: 16px;
+  border: 1px solid rgba(148,163,184,.22);
+  background: rgba(15,23,42,.04);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.crm-badge{
+  font-size: 12px;
+  font-weight: 900;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(15,23,42,.06);
+  border: 1px solid rgba(148,163,184,.22);
+}
+
+.crm-empty{
+  border-radius: 18px;
+  border: 1px dashed rgba(148,163,184,.35);
+  padding: 14px;
+  font-size: 13px;
+  color: rgba(51,65,85,.85);
+  background: rgba(255,255,255,.72);
+}
+
+/* Invite row card */
+.crm-invite{
+  border-radius: 22px;
+  border: 1px solid rgba(148,163,184,.22);
+  background: rgba(255,255,255,.86);
+  padding: 14px;
+  box-shadow: 0 12px 30px rgba(2,6,23,.06);
+}
+
+/* MODAL */
+.crm-modal{
+  width: 100%;
+  max-width: 720px;
+  border-radius: 30px;
+  border: 1px solid rgba(255,255,255,.60);
+  background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.82));
+  box-shadow: var(--shadow2);
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+}
+
+.crm-modal-head{
+  padding: 18px 18px;
+  border-bottom: 1px solid rgba(148,163,184,.18);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+.crm-modal-foot{
+  padding: 18px 18px;
+  border-top: 1px solid rgba(148,163,184,.18);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+/* TOAST */
+.crm-toast{
+  border-radius: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148,163,184,.22);
+  background: rgba(255,255,255,.86);
+  box-shadow: 0 16px 34px rgba(2,6,23,.10);
+  font-size: 13px;
+  font-weight: 800;
+}
+.crm-toast-ok{
+  border-color: rgba(16,185,129,.22);
+  color: #047857;
+}
+.crm-toast-err{
+  border-color: rgba(239,68,68,.22);
+  color: #b91c1c;
+}
