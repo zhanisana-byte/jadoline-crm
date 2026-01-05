@@ -16,7 +16,6 @@ type ProfileRow = {
 type AgencyRow = {
   id: string;
   name: string;
-  // join_code supprimé côté UI (et idéalement côté select)
 };
 
 type InviteRow = {
@@ -67,7 +66,6 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
-/** ✅ Avatar UI: image si dispo, sinon initiales */
 function Avatar({
   name,
   url,
@@ -93,7 +91,6 @@ function Avatar({
           alt={name ? `Avatar de ${name}` : "Avatar"}
           className="w-full h-full object-cover"
           onError={(e) => {
-            // fallback si url cassée
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
         />
@@ -123,28 +120,29 @@ export default function ProfilePage() {
 
   const isAgency = profile?.account_type === "AGENCY";
 
-  // Join (SM) — si tu veux le garder pour SM, on le laisse
+  // Join (SM)
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
 
-  // Agency invite SM by email
+  // Agency invite SM
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
-
   const [editFullName, setEditFullName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editAgencyName, setEditAgencyName] = useState("");
 
-  // ✅ Upload avatar
+  // Upload avatar
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
 
-  // Switch (SM -> Agency)
+  // ✅ Switch modal
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [newAgencyName, setNewAgencyName] = useState("");
   const [switchBusy, setSwitchBusy] = useState(false);
 
   // Toast
@@ -233,7 +231,6 @@ export default function ProfilePage() {
     const pr = p as ProfileRow;
     setProfile(pr);
 
-    // ✅ Agency: on ne sélectionne plus join_code
     let ag: AgencyRow | null = null;
     if (pr.agency_id) {
       const { data: a, error: aErr } = await supabase
@@ -245,7 +242,6 @@ export default function ProfilePage() {
     }
     setAgency(ag);
 
-    // Invites for me (SM) by email
     if (u.user.email) {
       const { data: invMe, error: invMeErr } = await supabase
         .from("agency_invites")
@@ -258,7 +254,6 @@ export default function ProfilePage() {
       setInvitesForMe([]);
     }
 
-    // Invites for agency (AGENCY receives)
     if (pr.account_type === "AGENCY" && pr.agency_id) {
       const { data: invAg, error: invAgErr } = await supabase
         .from("agency_invites")
@@ -267,14 +262,9 @@ export default function ProfilePage() {
         .eq("status", "PENDING")
         .order("created_at", { ascending: false });
       setInvitesForAgency(!invAgErr ? ((invAg || []) as InviteRow[]) : []);
-    } else {
-      setInvitesForAgency([]);
-    }
-
-    // Members list (only for AGENCY)
-    if (pr.account_type === "AGENCY" && pr.agency_id) {
       await loadMembers(pr.agency_id);
     } else {
+      setInvitesForAgency([]);
       setMembers([]);
     }
 
@@ -293,7 +283,6 @@ export default function ProfilePage() {
     setEditEmail(userEmail ?? "");
     setEditAgencyName(agency?.name ?? "");
 
-    // reset upload state
     setAvatarFile(null);
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
     setAvatarPreview(null);
@@ -330,7 +319,7 @@ export default function ProfilePage() {
     }
   }
 
-  // ✅ Agency invite Social Manager by email
+  // ✅ Invitation SM (RPC existe maintenant)
   async function inviteSocialManagerByEmail() {
     const em = inviteEmail.trim().toLowerCase();
     if (!em || !isValidEmail(em)) {
@@ -387,13 +376,9 @@ export default function ProfilePage() {
     await loadAll();
   }
 
-  /** ✅ Upload avatar to Supabase Storage and returns public URL */
   async function uploadAvatar(file: File) {
     if (!profile) throw new Error("Profile introuvable");
-    // Bucket à créer dans Supabase Storage: "avatars"
     const bucket = "avatars";
-
-    // petite sécurité
     const maxMB = 3;
     if (file.size > maxMB * 1024 * 1024) {
       throw new Error(`Image trop grande (max ${maxMB}MB).`);
@@ -403,7 +388,6 @@ export default function ProfilePage() {
     const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
     const path = `users/${profile.user_id}/avatar.${safeExt}`;
 
-    // upload (upsert)
     const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
       upsert: true,
       cacheControl: "3600",
@@ -411,7 +395,6 @@ export default function ProfilePage() {
     });
     if (upErr) throw new Error(upErr.message);
 
-    // public URL
     const { data } = supabase.storage.from(bucket).getPublicUrl(path);
     const publicUrl = data?.publicUrl;
     if (!publicUrl) throw new Error("Impossible d’obtenir l’URL publique.");
@@ -424,7 +407,6 @@ export default function ProfilePage() {
     try {
       let newAvatarUrl: string | null = profile.avatar_url ?? null;
 
-      // ✅ si user a choisi un fichier, on upload d’abord
       if (avatarFile) {
         setAvatarBusy(true);
         try {
@@ -450,10 +432,7 @@ export default function ProfilePage() {
       if (isAgency && profile.agency_id) {
         const newName = editAgencyName.trim();
         if (newName) {
-          const { error: aErr } = await supabase
-            .from("agencies")
-            .update({ name: newName })
-            .eq("id", profile.agency_id);
+          const { error: aErr } = await supabase.from("agencies").update({ name: newName }).eq("id", profile.agency_id);
           if (aErr) {
             setToast({ type: "err", msg: `Erreur agence: ${aErr.message}` });
             return;
@@ -482,18 +461,23 @@ export default function ProfilePage() {
     }
   }
 
-  async function switchToAgency() {
+  // ✅ Switch submit (RPC avec p_agency_name)
+  async function submitSwitchToAgency() {
+    const nm = newAgencyName.trim();
+    if (nm.length < 2) {
+      setToast({ type: "err", msg: "Nom agence requis (min 2 caractères)." });
+      return;
+    }
+
     setSwitchBusy(true);
     try {
-      const { error } = await supabase.rpc("switch_to_agency");
+      const { error } = await supabase.rpc("switch_to_agency", { p_agency_name: nm });
       if (error) {
-        setToast({
-          type: "err",
-          msg: "Switch indisponible (RPC manquante ou erreur): " + error.message,
-        });
+        setToast({ type: "err", msg: "Switch: " + error.message });
         return;
       }
-      setToast({ type: "ok", msg: "Vous êtes maintenant une Agence ✅" });
+      setToast({ type: "ok", msg: "Agence créée ✅" });
+      setSwitchOpen(false);
       await loadAll();
     } finally {
       setSwitchBusy(false);
@@ -508,27 +492,18 @@ export default function ProfilePage() {
 
   return (
     <div className="crm-shell">
-      {/* Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50">
-          <div className={cn("crm-toast", toast.type === "ok" ? "crm-toast-ok" : "crm-toast-err")}>
-            {toast.msg}
-          </div>
+          <div className={cn("crm-toast", toast.type === "ok" ? "crm-toast-ok" : "crm-toast-err")}>{toast.msg}</div>
         </div>
       )}
 
       <div className="crm-container">
         <div className="crm-card overflow-hidden">
-          {/* HERO */}
           <div className={cn("crm-hero", isAgency ? "crm-hero-agency" : "crm-hero-sm")}>
             <div className="relative z-[1] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                {/* ✅ Photo au lieu de mot */}
-                <Avatar
-                  name={isAgency ? agency?.name : profile?.full_name}
-                  url={isAgency ? null : profile?.avatar_url}
-                  size={58}
-                />
+                <Avatar name={isAgency ? agency?.name : profile?.full_name} url={isAgency ? null : profile?.avatar_url} size={58} />
                 <div className="min-w-0">
                   <div className="text-2xl font-semibold truncate">{heroTitle}</div>
                   <div className="text-white/85 text-sm mt-1">{heroSub}</div>
@@ -536,22 +511,15 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {/* ✅ “Modifier profil” uniquement dans le header (comme tu as demandé) */}
               <div className="flex flex-wrap gap-2">
-                <button onClick={openEdit} className="crm-btn-glass">
-                  ✏️ Modifier profil
-                </button>
-                <button onClick={() => loadAll()} className="crm-btn-glass">
-                  ⟳ Actualiser
-                </button>
+                <button onClick={openEdit} className="crm-btn-glass">✏️ Modifier profil</button>
+                <button onClick={() => loadAll()} className="crm-btn-glass">⟳ Actualiser</button>
               </div>
             </div>
           </div>
 
-          {/* CONTENT */}
           <div className="p-5 sm:p-7">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* LEFT */}
               <div className="crm-card-soft p-5">
                 <div className="text-sm font-semibold">{isAgency ? "Identifiants agence" : "Rejoindre une agence"}</div>
                 <div className="text-sm text-slate-600 mt-1">
@@ -560,42 +528,34 @@ export default function ProfilePage() {
 
                 {isAgency ? (
                   <div className="mt-4 space-y-2">
-                    {/* ✅ AGENCE: on supprime join_code et on laisse seulement ID */}
                     <div className="flex items-center gap-2">
                       <div className="crm-pill flex-1">
                         ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
                       </div>
-                      <button
-                        onClick={() => profile?.agency_id && copyText(profile.agency_id)}
-                        className="crm-btn-soft"
-                      >
+                      <button onClick={() => profile?.agency_id && copyText(profile.agency_id)} className="crm-btn-soft">
                         Copier
                       </button>
-                    </div>
-
-                    <div className="text-xs text-slate-500 mt-2">
-                      Partagez cet ID à votre Social Manager pour rattachement (ou via invitation email).
                     </div>
                   </div>
                 ) : (
                   <div className="mt-4 flex items-center gap-2">
-                    <input
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value)}
-                      placeholder="Code agence"
-                      className="crm-input"
-                    />
+                    <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Code agence" className="crm-input" />
                     <button onClick={requestJoin} disabled={joinBusy} className="crm-btn-primary">
                       {joinBusy ? "..." : "Rejoindre"}
                     </button>
                   </div>
                 )}
 
-                {/* ✅ SM: on supprime “Agence actuelle” */}
                 {!isAgency && (
                   <div className="mt-4 space-y-2">
-                    <button onClick={switchToAgency} disabled={switchBusy} className="crm-btn-primary w-full">
-                      {switchBusy ? "..." : "Créer mon agence (Switch)"}
+                    <button
+                      onClick={() => {
+                        setNewAgencyName("");
+                        setSwitchOpen(true);
+                      }}
+                      className="crm-btn-primary w-full"
+                    >
+                      Créer mon agence (Switch)
                     </button>
                     <div className="text-xs text-slate-500">
                       Le switch crée votre agence et vous passe en mode <b>AGENCY</b>.
@@ -604,15 +564,12 @@ export default function ProfilePage() {
                 )}
               </div>
 
-              {/* RIGHT */}
               <div className="crm-card-soft p-5 lg:col-span-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-semibold">Invitations</div>
                     <div className="text-sm text-slate-600 mt-1">
-                      {isAgency
-                        ? "Demandes reçues pour rejoindre votre agence."
-                        : "Invitations reçues pour rejoindre une agence."}
+                      {isAgency ? "Demandes reçues pour rejoindre votre agence." : "Invitations reçues pour rejoindre une agence."}
                     </div>
                   </div>
                   <span className="crm-badge">{inviteCount}</span>
@@ -633,29 +590,17 @@ export default function ProfilePage() {
                           <div className="flex gap-2">
                             {isAgency ? (
                               <>
-                                <button onClick={() => approveInviteForAgency(inv.id)} className="crm-btn-ok">
-                                  Accepter
-                                </button>
-                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
-                                  Refuser
-                                </button>
+                                <button onClick={() => approveInviteForAgency(inv.id)} className="crm-btn-ok">Accepter</button>
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">Refuser</button>
                               </>
                             ) : (
                               <>
-                                <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">
-                                  Accepter
-                                </button>
-                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
-                                  Refuser
-                                </button>
+                                <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">Accepter</button>
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">Refuser</button>
                               </>
                             )}
                           </div>
                         </div>
-
-                        {!isAgency && (
-                          <div className="mt-3 text-xs text-slate-500">(Vous pouvez aussi accepter via /invite?token=…)</div>
-                        )}
                       </div>
                     ))
                   )}
@@ -665,35 +610,21 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* AGENCY SECTION: Invite SM + Team */}
             {isAgency && (
               <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* Invite SM */}
                 <div className="crm-card-soft p-5">
                   <div className="text-sm font-semibold">Inviter Social Manager</div>
-                  <div className="text-sm text-slate-600 mt-1">
-                    Entrez l’email du Social Manager (doit exister dans Jadoline).
-                  </div>
+                  <div className="text-sm text-slate-600 mt-1">Entrez l’email du Social Manager (doit exister dans Jadoline).</div>
 
                   <div className="mt-4 space-y-2">
-                    <input
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      placeholder="email@exemple.com"
-                      className="crm-input"
-                    />
-                    <button
-                      onClick={inviteSocialManagerByEmail}
-                      disabled={inviteBusy}
-                      className="crm-btn-primary w-full"
-                    >
+                    <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="email@exemple.com" className="crm-input" />
+                    <button onClick={inviteSocialManagerByEmail} disabled={inviteBusy} className="crm-btn-primary w-full">
                       {inviteBusy ? "Envoi..." : "Envoyer invitation"}
                     </button>
                     <div className="text-xs text-slate-500">L’invitation apparaîtra dans “Invitations”.</div>
                   </div>
                 </div>
 
-                {/* Team */}
                 <div className="crm-card-soft p-5 lg:col-span-2">
                   <div className="flex items-center justify-between">
                     <div>
@@ -719,9 +650,7 @@ export default function ProfilePage() {
                                 <Avatar name={nm} url={m.profile?.avatar_url ?? null} size={46} className="text-sm" />
                                 <div className="min-w-0">
                                   <div className="font-extrabold truncate">{nm}</div>
-                                  <div className="text-sm text-slate-600 mt-1">
-                                    {at || "MEMBER"} • {m.role} • {m.status || "active"}
-                                  </div>
+                                  <div className="text-sm text-slate-600 mt-1">{at || "MEMBER"} • {m.role} • {m.status || "active"}</div>
                                 </div>
                               </div>
                             </div>
@@ -732,12 +661,8 @@ export default function ProfilePage() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">
-                      Ouvrir Récap
-                    </button>
-                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
-                      Dashboard
-                    </button>
+                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">Ouvrir Récap</button>
+                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">Dashboard</button>
                   </div>
                 </div>
               </div>
@@ -752,22 +677,14 @@ export default function ProfilePage() {
               <div className="crm-modal-head">
                 <div>
                   <div className="text-lg font-black">Modifier profil</div>
-                  <div className="text-sm text-slate-600 mt-1">
-                    Nom, email, photo{isAgency ? ", agence" : ""}
-                  </div>
+                  <div className="text-sm text-slate-600 mt-1">Nom, email, photo{isAgency ? ", agence" : ""}</div>
                 </div>
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
-                  ✕
-                </button>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">✕</button>
               </div>
 
               <div className="p-6 space-y-4">
                 <div className="flex items-center gap-4">
-                  <Avatar
-                    name={editFullName || profile?.full_name}
-                    url={avatarPreview || profile?.avatar_url}
-                    size={64}
-                  />
+                  <Avatar name={editFullName || profile?.full_name} url={avatarPreview || profile?.avatar_url} size={64} />
                   <div className="min-w-0">
                     <div className="text-sm font-bold">Photo de profil</div>
                     <div className="text-xs text-slate-500 mt-1">PNG/JPG/WebP • max 3MB</div>
@@ -804,49 +721,62 @@ export default function ProfilePage() {
 
                 <div>
                   <label className="text-sm font-bold">Nom du profil</label>
-                  <input
-                    value={editFullName}
-                    onChange={(e) => setEditFullName(e.target.value)}
-                    className="crm-input mt-2"
-                    placeholder="Votre nom"
-                  />
+                  <input value={editFullName} onChange={(e) => setEditFullName(e.target.value)} className="crm-input mt-2" />
                 </div>
 
                 <div>
                   <label className="text-sm font-bold">Email</label>
-                  <input
-                    value={editEmail}
-                    onChange={(e) => setEditEmail(e.target.value)}
-                    className="crm-input mt-2"
-                    placeholder="email@exemple.com"
-                  />
+                  <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="crm-input mt-2" />
                   <div className="text-xs text-slate-500 mt-2">Si l’email change, Supabase peut demander une confirmation.</div>
                 </div>
 
                 {isAgency && (
                   <div>
                     <label className="text-sm font-bold">Nom de l’agence</label>
-                    <input
-                      value={editAgencyName}
-                      onChange={(e) => setEditAgencyName(e.target.value)}
-                      className="crm-input mt-2"
-                      placeholder="Nom agence"
-                    />
+                    <input value={editAgencyName} onChange={(e) => setEditAgencyName(e.target.value)} className="crm-input mt-2" />
                   </div>
                 )}
               </div>
 
               <div className="crm-modal-foot">
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
-                  Annuler
-                </button>
-                <button
-                  onClick={saveEdit}
-                  disabled={saveBusy || avatarBusy}
-                  className="crm-btn-primary"
-                  title={avatarBusy ? "Upload en cours..." : undefined}
-                >
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">Annuler</button>
+                <button onClick={saveEdit} disabled={saveBusy || avatarBusy} className="crm-btn-primary">
                   {saveBusy || avatarBusy ? "Enregistrement..." : "Enregistrer"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ MODAL SWITCH */}
+        {switchOpen && (
+          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4">
+            <div className="crm-modal">
+              <div className="crm-modal-head">
+                <div>
+                  <div className="text-lg font-black">Créer mon agence</div>
+                  <div className="text-sm text-slate-600 mt-1">Choisissez un nom (modifiable après).</div>
+                </div>
+                <button onClick={() => setSwitchOpen(false)} className="crm-btn-soft">✕</button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-sm font-bold">Nom de l’agence</label>
+                  <input
+                    value={newAgencyName}
+                    onChange={(e) => setNewAgencyName(e.target.value)}
+                    className="crm-input mt-2"
+                    placeholder="Ex: Ryhem Agency"
+                  />
+                </div>
+                <div className="text-xs text-slate-500">Vos invitations en attente ne seront pas supprimées.</div>
+              </div>
+
+              <div className="crm-modal-foot">
+                <button onClick={() => setSwitchOpen(false)} className="crm-btn-soft">Annuler</button>
+                <button onClick={submitSwitchToAgency} disabled={switchBusy} className="crm-btn-primary">
+                  {switchBusy ? "Création..." : "Créer"}
                 </button>
               </div>
             </div>
