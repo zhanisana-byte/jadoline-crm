@@ -1,206 +1,247 @@
-// src/app/profile/page.tsx
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-import JoinAgencyCard from "@/components/profile/JoinAgencyCard";
-import MonAgencyCard from "@/components/profile/MonAgencyCard";
-import ProfileInfoCard from "@/components/profile/ProfileInfoCard";
-import QuickRecapCard from "@/components/profile/QuickRecapCard";
-import WorkspaceCard from "@/components/profile/WorkspaceCard";
+/* ================= TYPES ================= */
 
 type ProfileRow = {
   user_id: string;
   full_name: string | null;
   agency_id: string | null;
-  role: string | null;
-  created_at: string | null;
-  avatar_url: string | null;
-  account_type: "AGENCY" | "SOCIAL_MANAGER" | null;
+  account_type: "AGENCY" | "SOCIAL_MANAGER";
 };
 
-function cn(...cls: (string | false | null | undefined)[]) {
-  return cls.filter(Boolean).join(" ");
+type AgencyRow = {
+  id: string;
+  name: string | null;
+};
+
+type InviteRow = {
+  id: string;
+  agency_id: string;
+  email: string;
+  status: "PENDING" | "ACCEPTED" | "REVOKED";
+  created_at: string;
+};
+
+/* ================= UTILS ================= */
+
+function cn(...c: (string | false | null | undefined)[]) {
+  return c.filter(Boolean).join(" ");
 }
 
 function initials(name?: string | null) {
-  const n = (name ?? "").trim();
-  if (!n) return "U";
-  const parts = n.split(/\s+/).slice(0, 2);
-  return parts.map((p) => p[0]?.toUpperCase()).join("") || "U";
+  if (!name) return "U";
+  return name
+    .split(" ")
+    .slice(0, 2)
+    .map((n) => n[0].toUpperCase())
+    .join("");
 }
+
+/* ================= PAGE ================= */
 
 export default function ProfilePage() {
   const supabase = useMemo(() => createClient(), []);
 
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [email, setEmail] = useState<string>("");
   const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [agency, setAgency] = useState<AgencyRow | null>(null);
+  const [email, setEmail] = useState("");
 
-  async function load() {
-    setLoading(true);
-    setErr(null);
+  const [openInv, setOpenInv] = useState(false);
 
-    try {
-      const { data: uRes, error: uErr } = await supabase.auth.getUser();
-      if (uErr) throw uErr;
+  /* ===== LOAD PROFILE ===== */
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) return;
 
-      const user = uRes.user;
-      if (!user) {
-        setErr("Vous devez être connecté(e).");
-        setProfile(null);
-        return;
-      }
+      setEmail(data.user.email ?? "");
 
-      setEmail(user.email ?? "");
-
-      const { data, error } = await supabase
+      const { data: prof } = await supabase
         .from("users_profile")
-        .select("user_id, full_name, agency_id, role, created_at, avatar_url, account_type")
-        .eq("user_id", user.id)
+        .select("user_id, full_name, agency_id, account_type")
+        .eq("user_id", data.user.id)
         .single();
 
-      if (error) throw error;
+      setProfile(prof);
 
-      setProfile({
-        user_id: String(data.user_id),
-        full_name: data.full_name ?? null,
-        agency_id: data.agency_id ?? null,
-        role: data.role ?? null,
-        created_at: data.created_at ?? null,
-        avatar_url: data.avatar_url ?? null,
-        account_type: (data.account_type ?? null) as any,
-      });
-    } catch (e: any) {
-      setErr(e?.message ?? "Une erreur est survenue.");
-      setProfile(null);
-    } finally {
+      if (prof?.agency_id) {
+        const { data: ag } = await supabase
+          .from("agencies")
+          .select("id, name")
+          .eq("id", prof.agency_id)
+          .single();
+        setAgency(ag);
+      }
+
       setLoading(false);
-    }
-  }
+    })();
+  }, [supabase]);
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  if (loading || !profile) return null;
 
-  if (loading) return null;
-
-  if (err) {
-    return (
-      <div className="max-w-3xl mx-auto p-6">
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          {err}
-        </div>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="max-w-3xl mx-auto p-6">
-        <div className="rounded-2xl border border-slate-200 bg-white/80 p-4">
-          Aucun profil.
-        </div>
-      </div>
-    );
-  }
-
-  const accountLabel =
+  const displayName =
     profile.account_type === "AGENCY"
-      ? "AGENCE"
-      : profile.account_type === "SOCIAL_MANAGER"
-      ? "SOCIAL MANAGER"
-      : "COMPTE";
-
-  const myAgencyId = profile.agency_id ?? null;
+      ? agency?.name ?? "Agence"
+      : profile.full_name ?? "Utilisateur";
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
-      {/* HEADER */}
+    <div className="max-w-4xl mx-auto p-6 space-y-6">
+      {/* ================= HEADER ================= */}
       <div className="card p-6">
-        <div className="profileTop">
-          <div className="profileLeft">
-            {/* Avatar */}
-            {profile.avatar_url ? (
-              <img
-                src={profile.avatar_url}
-                alt="Avatar"
-                className="w-[72px] h-[72px] rounded-full object-cover border border-slate-200"
-              />
-            ) : (
-              <div className="avatarCircle">{initials(profile.full_name)}</div>
-            )}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="avatarCircle">
+              {initials(displayName)}
+            </div>
 
-            {/* Infos */}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="profileName truncate">
-                  {profile.full_name ?? "Utilisateur"}
-                </div>
-
-                <span
-                  className={cn(
-                    "badge",
-                    profile.account_type === "AGENCY" ? "badge-info" : "badge-success"
-                  )}
-                >
-                  {accountLabel}
-                </span>
-
-                {profile.role ? (
-                  <span className="badge border-slate-200 bg-white text-slate-700">
-                    {String(profile.role)}
-                  </span>
-                ) : null}
+            <div>
+              <div className="text-2xl font-extrabold">
+                {displayName}
               </div>
 
-              <div className="profileEmail truncate">{email || "—"}</div>
+              <div className="mt-1 flex items-center gap-2 text-sm">
+                <span className="badge badge-info">
+                  {profile.account_type}
+                </span>
+
+                {profile.agency_id && (
+                  <span className="text-slate-500">
+                    ID agence :
+                    <span className="ml-1 font-mono text-indigo-700">
+                      {profile.agency_id}
+                    </span>
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-1 text-sm text-slate-500">
+                {email}
+              </div>
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            <Link
-              href="/notifications"
-              className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-800"
-            >
-              Notifications
-            </Link>
-          </div>
+          <button
+            onClick={() => setOpenInv(true)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+          >
+            Notifications
+          </button>
         </div>
       </div>
 
-      {/* GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT */}
-        <div className="space-y-6">
-          <ProfileInfoCard
-            profile={{
-              full_name: profile.full_name,
-              created_at: profile.created_at,
-            }}
-            email={email}
-            onSaved={load} // ✅ refresh sans reload
-          />
+      {/* ================= MODAL ================= */}
+      {openInv && (
+        <InvitationsModal onClose={() => setOpenInv(false)} />
+      )}
+    </div>
+  );
+}
 
-          {/* SOCIAL_MANAGER: rejoindre */}
-          {profile.account_type === "SOCIAL_MANAGER" && <JoinAgencyCard />}
+/* ================= MODAL INVITATIONS ================= */
 
-          <QuickRecapCard />
-        </div>
+function InvitationsModal({ onClose }: { onClose: () => void }) {
+  const supabase = useMemo(() => createClient(), []);
 
-        {/* RIGHT */}
-        <div className="space-y-6">
-          {/* AGENCY: mon agence */}
-          {profile.account_type === "AGENCY" && <MonAgencyCard myAgencyId={myAgencyId} />}
+  const [loading, setLoading] = useState(true);
+  const [invites, setInvites] = useState<InviteRow[]>([]);
 
-          {/* collaborations (work) */}
-          <WorkspaceCard myAgencyId={myAgencyId} />
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) return;
+
+      const { data: inv } = await supabase
+        .from("agency_invites")
+        .select("id, agency_id, email, status, created_at")
+        .eq("email", data.user.email)
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false });
+
+      setInvites(inv ?? []);
+      setLoading(false);
+    })();
+  }, [supabase]);
+
+  async function accept(inv: InviteRow) {
+    await supabase
+      .from("agency_invites")
+      .update({ status: "ACCEPTED" })
+      .eq("id", inv.id);
+
+    setInvites((v) => v.filter((i) => i.id !== inv.id));
+  }
+
+  async function refuse(inv: InviteRow) {
+    await supabase
+      .from("agency_invites")
+      .update({ status: "REVOKED" })
+      .eq("id", inv.id);
+
+    setInvites((v) => v.filter((i) => i.id !== inv.id));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+      />
+
+      <div className="absolute left-1/2 top-24 -translate-x-1/2 w-[90vw] max-w-xl">
+        <div className="rounded-2xl bg-white shadow-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-extrabold">
+              Invitations en attente
+            </h2>
+            <button onClick={onClose}>✕</button>
+          </div>
+
+          {loading ? (
+            <div className="text-sm text-slate-500">
+              Chargement…
+            </div>
+          ) : invites.length === 0 ? (
+            <div className="text-sm text-slate-500">
+              Aucune invitation
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {invites.map((inv) => (
+                <div
+                  key={inv.id}
+                  className="rounded-xl border border-slate-200 p-4 flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-semibold">
+                      Agence
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      ID : {inv.agency_id}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => accept(inv)}
+                      className="rounded-lg bg-emerald-500 text-white px-3 py-1 text-sm"
+                    >
+                      Accepter
+                    </button>
+                    <button
+                      onClick={() => refuse(inv)}
+                      className="rounded-lg bg-rose-500 text-white px-3 py-1 text-sm"
+                    >
+                      Refuser
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
