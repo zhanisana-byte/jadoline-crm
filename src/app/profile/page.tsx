@@ -16,7 +16,7 @@ type ProfileRow = {
 type AgencyRow = {
   id: string;
   name: string;
-  join_code: string | null;
+  // join_code supprimé côté UI (et idéalement côté select)
 };
 
 type InviteRow = {
@@ -67,6 +67,43 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+/** ✅ Avatar UI: image si dispo, sinon initiales */
+function Avatar({
+  name,
+  url,
+  size = 56,
+  className = "",
+}: {
+  name?: string | null;
+  url?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const s = `${size}px`;
+  return (
+    <div
+      className={cn("crm-avatar overflow-hidden", className)}
+      style={{ width: s, height: s }}
+      aria-label="Avatar"
+    >
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={name ? `Avatar de ${name}` : "Avatar"}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // fallback si url cassée
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <span>{initials(name)}</span>
+      )}
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -86,7 +123,7 @@ export default function ProfilePage() {
 
   const isAgency = profile?.account_type === "AGENCY";
 
-  // Join (SM)
+  // Join (SM) — si tu veux le garder pour SM, on le laisse
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
 
@@ -99,9 +136,13 @@ export default function ProfilePage() {
   const [saveBusy, setSaveBusy] = useState(false);
 
   const [editFullName, setEditFullName] = useState("");
-  const [editAvatarUrl, setEditAvatarUrl] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editAgencyName, setEditAgencyName] = useState("");
+
+  // ✅ Upload avatar
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
 
   // Switch (SM -> Agency)
   const [switchBusy, setSwitchBusy] = useState(false);
@@ -113,6 +154,12 @@ export default function ProfilePage() {
     const t = setTimeout(() => setToast(null), 2600);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    };
+  }, [avatarPreview]);
 
   function loginUrl() {
     return "/login?next=/profile";
@@ -186,11 +233,12 @@ export default function ProfilePage() {
     const pr = p as ProfileRow;
     setProfile(pr);
 
+    // ✅ Agency: on ne sélectionne plus join_code
     let ag: AgencyRow | null = null;
     if (pr.agency_id) {
       const { data: a, error: aErr } = await supabase
         .from("agencies")
-        .select("id, name, join_code")
+        .select("id, name")
         .eq("id", pr.agency_id)
         .single();
       ag = !aErr && a ? (a as AgencyRow) : null;
@@ -242,9 +290,14 @@ export default function ProfilePage() {
 
   function openEdit() {
     setEditFullName(profile?.full_name ?? "");
-    setEditAvatarUrl(profile?.avatar_url ?? "");
     setEditEmail(userEmail ?? "");
     setEditAgencyName(agency?.name ?? "");
+
+    // reset upload state
+    setAvatarFile(null);
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    setAvatarPreview(null);
+
     setEditOpen(true);
   }
 
@@ -277,7 +330,7 @@ export default function ProfilePage() {
     }
   }
 
-  // ✅ New: Agency invite Social Manager by email
+  // ✅ Agency invite Social Manager by email
   async function inviteSocialManagerByEmail() {
     const em = inviteEmail.trim().toLowerCase();
     if (!em || !isValidEmail(em)) {
@@ -291,7 +344,6 @@ export default function ProfilePage() {
 
     setInviteBusy(true);
     try {
-      // RPC recommended for RLS + checks + token generation
       const { error } = await supabase.rpc("invite_social_manager", { p_email: em });
       if (error) {
         setToast({ type: "err", msg: `Invitation: ${error.message}` });
@@ -335,15 +387,58 @@ export default function ProfilePage() {
     await loadAll();
   }
 
+  /** ✅ Upload avatar to Supabase Storage and returns public URL */
+  async function uploadAvatar(file: File) {
+    if (!profile) throw new Error("Profile introuvable");
+    // Bucket à créer dans Supabase Storage: "avatars"
+    const bucket = "avatars";
+
+    // petite sécurité
+    const maxMB = 3;
+    if (file.size > maxMB * 1024 * 1024) {
+      throw new Error(`Image trop grande (max ${maxMB}MB).`);
+    }
+
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
+    const path = `users/${profile.user_id}/avatar.${safeExt}`;
+
+    // upload (upsert)
+    const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
+      upsert: true,
+      cacheControl: "3600",
+      contentType: file.type || undefined,
+    });
+    if (upErr) throw new Error(upErr.message);
+
+    // public URL
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+    const publicUrl = data?.publicUrl;
+    if (!publicUrl) throw new Error("Impossible d’obtenir l’URL publique.");
+    return publicUrl;
+  }
+
   async function saveEdit() {
     if (!profile) return;
     setSaveBusy(true);
     try {
+      let newAvatarUrl: string | null = profile.avatar_url ?? null;
+
+      // ✅ si user a choisi un fichier, on upload d’abord
+      if (avatarFile) {
+        setAvatarBusy(true);
+        try {
+          newAvatarUrl = await uploadAvatar(avatarFile);
+        } finally {
+          setAvatarBusy(false);
+        }
+      }
+
       const { error: pErr } = await supabase
         .from("users_profile")
         .update({
           full_name: editFullName.trim() || null,
-          avatar_url: editAvatarUrl.trim() || null,
+          avatar_url: newAvatarUrl,
         })
         .eq("user_id", profile.user_id);
 
@@ -380,6 +475,8 @@ export default function ProfilePage() {
 
       setEditOpen(false);
       await loadAll();
+    } catch (e: any) {
+      setToast({ type: "err", msg: e?.message || "Erreur inconnue." });
     } finally {
       setSaveBusy(false);
     }
@@ -403,10 +500,8 @@ export default function ProfilePage() {
     }
   }
 
-  const heroTitle = isAgency ? (agency?.name || "Mon agence") : (profile?.full_name || "Mon profil");
-  const heroSub = isAgency
-    ? `Compte Agence • ${profile?.full_name || "Owner"}`
-    : "Social Manager";
+  const heroTitle = isAgency ? agency?.name || "Mon agence" : profile?.full_name || "Mon profil";
+  const heroSub = isAgency ? `Compte Agence • ${profile?.full_name || "Owner"}` : "Social Manager";
 
   const invites = isAgency ? invitesForAgency : invitesForMe;
   const inviteCount = invites.length;
@@ -428,7 +523,12 @@ export default function ProfilePage() {
           <div className={cn("crm-hero", isAgency ? "crm-hero-agency" : "crm-hero-sm")}>
             <div className="relative z-[1] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                <div className="crm-avatar">{initials(isAgency ? agency?.name : profile?.full_name)}</div>
+                {/* ✅ Photo au lieu de mot */}
+                <Avatar
+                  name={isAgency ? agency?.name : profile?.full_name}
+                  url={isAgency ? null : profile?.avatar_url}
+                  size={58}
+                />
                 <div className="min-w-0">
                   <div className="text-2xl font-semibold truncate">{heroTitle}</div>
                   <div className="text-white/85 text-sm mt-1">{heroSub}</div>
@@ -436,30 +536,31 @@ export default function ProfilePage() {
                 </div>
               </div>
 
+              {/* ✅ “Modifier profil” uniquement dans le header (comme tu as demandé) */}
               <div className="flex flex-wrap gap-2">
-                <button onClick={openEdit} className="crm-btn-glass">✏️ Modifier</button>
-                <button onClick={() => loadAll()} className="crm-btn-glass">⟳ Actualiser</button>
+                <button onClick={openEdit} className="crm-btn-glass">
+                  ✏️ Modifier profil
+                </button>
+                <button onClick={() => loadAll()} className="crm-btn-glass">
+                  ⟳ Actualiser
+                </button>
               </div>
             </div>
           </div>
 
           {/* CONTENT */}
           <div className="p-5 sm:p-7">
-            {/* TOP GRID */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* LEFT */}
               <div className="crm-card-soft p-5">
-                <div className="text-sm font-semibold">
-                  {isAgency ? "Identifiants agence" : "Rejoindre une agence"}
-                </div>
+                <div className="text-sm font-semibold">{isAgency ? "Identifiants agence" : "Rejoindre une agence"}</div>
                 <div className="text-sm text-slate-600 mt-1">
-                  {isAgency
-                    ? "Partagez votre code avec vos Social Managers."
-                    : "Entrez le code join_code fourni par une agence."}
+                  {isAgency ? "Partagez votre identifiant d’agence." : "Entrez le code fourni par une agence."}
                 </div>
 
                 {isAgency ? (
                   <div className="mt-4 space-y-2">
+                    {/* ✅ AGENCE: on supprime join_code et on laisse seulement ID */}
                     <div className="flex items-center gap-2">
                       <div className="crm-pill flex-1">
                         ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
@@ -472,20 +573,8 @@ export default function ProfilePage() {
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="crm-pill flex-1">
-                        Join code: <span className="font-extrabold">{agency?.join_code ?? "—"}</span>
-                      </div>
-                      <button
-                        onClick={() => agency?.join_code && copyText(agency.join_code)}
-                        className="crm-btn-soft"
-                      >
-                        Copier
-                      </button>
-                    </div>
-
                     <div className="text-xs text-slate-500 mt-2">
-                      (Recommandé: partager le <b>join_code</b> plutôt que l’UUID.)
+                      Partagez cet ID à votre Social Manager pour rattachement (ou via invitation email).
                     </div>
                   </div>
                 ) : (
@@ -493,7 +582,7 @@ export default function ProfilePage() {
                     <input
                       value={joinCode}
                       onChange={(e) => setJoinCode(e.target.value)}
-                      placeholder="Code agence (join_code)"
+                      placeholder="Code agence"
                       className="crm-input"
                     />
                     <button onClick={requestJoin} disabled={joinBusy} className="crm-btn-primary">
@@ -502,15 +591,9 @@ export default function ProfilePage() {
                   </div>
                 )}
 
-                {!isAgency && (
-                  <div className="mt-4 crm-pill">
-                    Agence actuelle: <span className="font-extrabold">{agency?.name ?? "Aucune"}</span>
-                  </div>
-                )}
-
+                {/* ✅ SM: on supprime “Agence actuelle” */}
                 {!isAgency && (
                   <div className="mt-4 space-y-2">
-                    <button onClick={openEdit} className="crm-btn-soft w-full">Modifier profil</button>
                     <button onClick={switchToAgency} disabled={switchBusy} className="crm-btn-primary w-full">
                       {switchBusy ? "..." : "Créer mon agence (Switch)"}
                     </button>
@@ -544,9 +627,7 @@ export default function ProfilePage() {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="min-w-0">
                             <div className="font-extrabold truncate">{inv.email}</div>
-                            <div className="text-sm text-slate-600 mt-1">
-                              Reçu le {formatDate(inv.created_at)}
-                            </div>
+                            <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
                           </div>
 
                           <div className="flex gap-2">
@@ -573,9 +654,7 @@ export default function ProfilePage() {
                         </div>
 
                         {!isAgency && (
-                          <div className="mt-3 text-xs text-slate-500">
-                            (Vous pouvez aussi accepter via <b>/invite?token=…</b>)
-                          </div>
+                          <div className="mt-3 text-xs text-slate-500">(Vous pouvez aussi accepter via /invite?token=…)</div>
                         )}
                       </div>
                     ))
@@ -586,7 +665,7 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* ✅ AGENCY SECTION: Invite SM + Team */}
+            {/* AGENCY SECTION: Invite SM + Team */}
             {isAgency && (
               <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* Invite SM */}
@@ -610,9 +689,7 @@ export default function ProfilePage() {
                     >
                       {inviteBusy ? "Envoi..." : "Envoyer invitation"}
                     </button>
-                    <div className="text-xs text-slate-500">
-                      L’invitation apparaîtra dans “Invitations” et le SM la verra aussi.
-                    </div>
+                    <div className="text-xs text-slate-500">L’invitation apparaîtra dans “Invitations”.</div>
                   </div>
                 </div>
 
@@ -621,9 +698,7 @@ export default function ProfilePage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm font-semibold">Équipe Social Managers</div>
-                      <div className="text-sm text-slate-600 mt-1">
-                        Membres actuels de l’agence.
-                      </div>
+                      <div className="text-sm text-slate-600 mt-1">Membres actuels de l’agence.</div>
                     </div>
                     <span className="crm-badge">{members.length}</span>
                   </div>
@@ -641,9 +716,7 @@ export default function ProfilePage() {
                           return (
                             <div key={m.user_id} className="crm-invite">
                               <div className="flex items-center gap-3">
-                                <div className="crm-avatar" style={{ width: 46, height: 46, fontSize: 14 }}>
-                                  {initials(nm)}
-                                </div>
+                                <Avatar name={nm} url={m.profile?.avatar_url ?? null} size={46} className="text-sm" />
                                 <div className="min-w-0">
                                   <div className="font-extrabold truncate">{nm}</div>
                                   <div className="text-sm text-slate-600 mt-1">
@@ -659,8 +732,12 @@ export default function ProfilePage() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">Ouvrir Récap</button>
-                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">Dashboard</button>
+                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">
+                      Ouvrir Récap
+                    </button>
+                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
+                      Dashboard
+                    </button>
                   </div>
                 </div>
               </div>
@@ -676,13 +753,55 @@ export default function ProfilePage() {
                 <div>
                   <div className="text-lg font-black">Modifier profil</div>
                   <div className="text-sm text-slate-600 mt-1">
-                    Nom, email, avatar{isAgency ? ", agence" : ""}
+                    Nom, email, photo{isAgency ? ", agence" : ""}
                   </div>
                 </div>
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">✕</button>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
+                  ✕
+                </button>
               </div>
 
               <div className="p-6 space-y-4">
+                <div className="flex items-center gap-4">
+                  <Avatar
+                    name={editFullName || profile?.full_name}
+                    url={avatarPreview || profile?.avatar_url}
+                    size={64}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold">Photo de profil</div>
+                    <div className="text-xs text-slate-500 mt-1">PNG/JPG/WebP • max 3MB</div>
+
+                    <label className="inline-flex items-center gap-2 mt-3 cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          setAvatarFile(f);
+                          if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                          setAvatarPreview(f ? URL.createObjectURL(f) : null);
+                        }}
+                      />
+                      <span className="crm-btn-soft">📷 Choisir une image</span>
+                      {(avatarFile || avatarPreview) && (
+                        <button
+                          type="button"
+                          className="crm-btn-soft"
+                          onClick={() => {
+                            setAvatarFile(null);
+                            if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                            setAvatarPreview(null);
+                          }}
+                        >
+                          Retirer
+                        </button>
+                      )}
+                    </label>
+                  </div>
+                </div>
+
                 <div>
                   <label className="text-sm font-bold">Nom du profil</label>
                   <input
@@ -701,19 +820,7 @@ export default function ProfilePage() {
                     className="crm-input mt-2"
                     placeholder="email@exemple.com"
                   />
-                  <div className="text-xs text-slate-500 mt-2">
-                    Si l’email change, Supabase peut demander une confirmation.
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Avatar URL</label>
-                  <input
-                    value={editAvatarUrl}
-                    onChange={(e) => setEditAvatarUrl(e.target.value)}
-                    className="crm-input mt-2"
-                    placeholder="https://..."
-                  />
+                  <div className="text-xs text-slate-500 mt-2">Si l’email change, Supabase peut demander une confirmation.</div>
                 </div>
 
                 {isAgency && (
@@ -733,8 +840,13 @@ export default function ProfilePage() {
                 <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
                   Annuler
                 </button>
-                <button onClick={saveEdit} disabled={saveBusy} className="crm-btn-primary">
-                  {saveBusy ? "Enregistrement..." : "Enregistrer"}
+                <button
+                  onClick={saveEdit}
+                  disabled={saveBusy || avatarBusy}
+                  className="crm-btn-primary"
+                  title={avatarBusy ? "Upload en cours..." : undefined}
+                >
+                  {saveBusy || avatarBusy ? "Enregistrement..." : "Enregistrer"}
                 </button>
               </div>
             </div>
