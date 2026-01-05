@@ -1,38 +1,41 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 function cn(...cls: (string | false | null | undefined)[]) {
   return cls.filter(Boolean).join(" ");
 }
 
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v.trim()
-  );
-}
+type AccountType = "AGENCY" | "CM";
 
 export default function RegisterPage() {
   const supabase = createClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
+  const [accountType, setAccountType] = useState<AccountType>("AGENCY");
   const [fullName, setFullName] = useState("");
-  const [agencyIdToJoin, setAgencyIdToJoin] = useState(""); // ✅ optionnel (UUID)
+  const [agencyName, setAgencyName] = useState(""); // فقط للـ AGENCY
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ pas de hardcode: utilise NEXT_PUBLIC_SITE_URL si dispo sinon fallback
   const siteUrl = useMemo(() => {
     const env = process.env.NEXT_PUBLIC_SITE_URL;
     if (env && env.startsWith("http")) return env.replace(/\/$/, "");
     if (typeof window !== "undefined") return window.location.origin;
     return "https://www.jadoline.com";
   }, []);
+
+  const next = useMemo(() => {
+    const n = searchParams?.get("next");
+    if (n && n.startsWith("/")) return n;
+    return "/profile";
+  }, [searchParams]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,10 +45,15 @@ export default function RegisterPage() {
     try {
       const cleanEmail = email.trim();
       const cleanName = fullName.trim();
-      const cleanAgency = agencyIdToJoin.trim();
+      const cleanAgencyName = agencyName.trim();
 
-      if (cleanAgency && !isUuid(cleanAgency)) {
-        setMsg("Agency ID invalide (format UUID).");
+      if (!cleanName) {
+        setMsg("Veuillez saisir votre nom complet.");
+        return;
+      }
+
+      if (accountType === "AGENCY" && !cleanAgencyName) {
+        setMsg("Veuillez saisir le nom de votre agence.");
         return;
       }
 
@@ -55,10 +63,13 @@ export default function RegisterPage() {
         options: {
           data: {
             full_name: cleanName,
-            // ✅ on stocke l'agency ID à rejoindre dans le metadata
-            join_agency_id: cleanAgency || null,
+            account_type: accountType,
+            agency_name: accountType === "AGENCY" ? cleanAgencyName : null,
+            // ✅ CM لا يحتاج join هنا
+            join_agency_id: null,
+            join_code: null,
           },
-          emailRedirectTo: `${siteUrl}/callback`,
+          emailRedirectTo: `${siteUrl}/callback?next=${encodeURIComponent(next)}`,
         },
       });
 
@@ -71,15 +82,13 @@ export default function RegisterPage() {
         throw signErr;
       }
 
-      // ✅ si confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
         return;
       }
 
-      // ✅ si confirmation OFF
-      router.push("/dashboard");
+      router.push(next);
     } catch (err: any) {
       setMsg(err?.message ?? "Erreur inconnue");
     } finally {
@@ -89,10 +98,10 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-semibold">Créer un compte</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Après confirmation email, ton profil sera créé + tu auras un Agency ID.
+          Agence: crée votre agence. CM: crée un compte puis rejoignez une agence plus tard.
         </p>
 
         {msg && (
@@ -101,6 +110,43 @@ export default function RegisterPage() {
           </div>
         )}
 
+        <div className="mt-6">
+          <p className="text-sm font-medium text-slate-900">Type de compte</p>
+          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setAccountType("AGENCY")}
+              className={cn(
+                "rounded-2xl border p-4 text-left transition",
+                accountType === "AGENCY"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 hover:border-slate-300 bg-white"
+              )}
+            >
+              <div className="font-semibold">Agence</div>
+              <div className={cn("mt-1 text-xs", accountType === "AGENCY" ? "text-slate-200" : "text-slate-500")}>
+                Créez et gérez vos clients.
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAccountType("CM")}
+              className={cn(
+                "rounded-2xl border p-4 text-left transition",
+                accountType === "CM"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 hover:border-slate-300 bg-white"
+              )}
+            >
+              <div className="font-semibold">CM</div>
+              <div className={cn("mt-1 text-xs", accountType === "CM" ? "text-slate-200" : "text-slate-500")}>
+                Créez un compte. Rejoignez une agence بعد.
+              </div>
+            </button>
+          </div>
+        </div>
+
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
             <label className="text-sm font-medium">Nom complet</label>
@@ -108,23 +154,23 @@ export default function RegisterPage() {
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="Ex : Sana Zhani"
               required
+              placeholder="Ex : Sana Zhani"
             />
           </div>
 
-          <div>
-            <label className="text-sm font-medium">Agency ID (optionnel)</label>
-            <input
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-              value={agencyIdToJoin}
-              onChange={(e) => setAgencyIdToJoin(e.target.value)}
-              placeholder="UUID de l'agence à rejoindre"
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Si tu mets un Agency ID ici, tu rejoins cette agence automatiquement.
-            </p>
-          </div>
+          {accountType === "AGENCY" && (
+            <div>
+              <label className="text-sm font-medium">Nom de l’agence</label>
+              <input
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                value={agencyName}
+                onChange={(e) => setAgencyName(e.target.value)}
+                required
+                placeholder="Ex : Sana Com"
+              />
+            </div>
+          )}
 
           <div>
             <label className="text-sm font-medium">Email</label>
@@ -132,9 +178,9 @@ export default function RegisterPage() {
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="email@exemple.com"
-              autoComplete="email"
               required
+              autoComplete="email"
+              placeholder="email@exemple.com"
             />
           </div>
 
@@ -145,11 +191,10 @@ export default function RegisterPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="new-password"
               required
+              autoComplete="new-password"
+              placeholder="••••••••"
             />
-            <p className="text-xs text-slate-500 mt-1">8 caractères minimum recommandés.</p>
           </div>
 
           <button
