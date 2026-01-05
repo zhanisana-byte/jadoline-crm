@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+
+type AccountType = "AGENCY" | "SOCIAL_MANAGER";
 
 function cn(...cls: (string | false | null | undefined)[]) {
   return cls.filter(Boolean).join(" ");
@@ -14,27 +16,22 @@ function isUuid(v: string) {
   );
 }
 
-type AccountType = "AGENCY" | "SOCIAL_MANAGER";
-
 export default function RegisterClient() {
   const supabase = createClient();
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [accountType, setAccountType] = useState<AccountType>("AGENCY");
 
   const [fullName, setFullName] = useState("");
-  const [agencyName, setAgencyName] = useState("");
-
-  // Social Manager: rattachement optionnel, affiché via bouton "Ajouter"
-  const [showJoin, setShowJoin] = useState(false);
-  const [joinInput, setJoinInput] = useState("");
+  const [agencyName, setAgencyName] = useState(""); // AGENCY uniquement
+  const [joinAgencyId, setJoinAgencyId] = useState(""); // optionnel pour tous
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgType, setMsgType] = useState<"success" | "error">("success");
 
   const siteUrl = useMemo(() => {
     const env = process.env.NEXT_PUBLIC_SITE_URL;
@@ -43,47 +40,28 @@ export default function RegisterClient() {
     return "https://www.jadoline.com";
   }, []);
 
-  const next = useMemo(() => {
-    const n = searchParams?.get("next");
-    if (n && n.startsWith("/")) return n;
-    return "/profile";
-  }, [searchParams]);
-
-  const joinKind = useMemo(() => {
-    const v = joinInput.trim();
-    if (!v) return "NONE";
-    return isUuid(v) ? "AGENCY_ID" : "CODE_OR_KEY";
-  }, [joinInput]);
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setMsg(null);
 
     try {
-      const cleanEmail = email.trim();
+      const cleanEmail = email.trim().toLowerCase();
       const cleanName = fullName.trim();
       const cleanAgencyName = agencyName.trim();
-      const cleanJoin = joinInput.trim();
+      const cleanJoinAgencyId = joinAgencyId.trim();
 
-      if (!cleanName) {
-        setMsg("Veuillez saisir votre nom complet.");
-        return;
+      if (!cleanName) throw new Error("Veuillez saisir votre nom complet.");
+      if (!cleanEmail) throw new Error("Veuillez saisir votre email.");
+      if (!password || password.length < 6)
+        throw new Error("Mot de passe trop court (6 caractères minimum).");
+
+      if (accountType === "AGENCY" && !cleanAgencyName) {
+        throw new Error("Veuillez saisir le nom de votre agence.");
       }
 
-      if (accountType === "AGENCY") {
-        if (!cleanAgencyName) {
-          setMsg("Veuillez saisir le nom de votre agence.");
-          return;
-        }
-      }
-
-      if (accountType === "SOCIAL_MANAGER") {
-        // join optionnel, mais si ouvert et rempli: valide
-        if (showJoin && cleanJoin && joinKind === "AGENCY_ID" && !isUuid(cleanJoin)) {
-          setMsg("Agency ID invalide (format UUID).");
-          return;
-        }
+      if (cleanJoinAgencyId && !isUuid(cleanJoinAgencyId)) {
+        throw new Error("Agency ID invalide (format UUID).");
       }
 
       const { error: signErr } = await supabase.auth.signUp({
@@ -92,129 +70,116 @@ export default function RegisterClient() {
         options: {
           data: {
             full_name: cleanName,
-            account_type: accountType,
-
-            // AGENCY: création agence
+            account_type: accountType, // ✅ TRÈS IMPORTANT
             agency_name: accountType === "AGENCY" ? cleanAgencyName : null,
-
-            // SOCIAL_MANAGER: join optionnel (uniquement si showJoin et valeur)
-            join_agency_id:
-              accountType === "SOCIAL_MANAGER" && showJoin && cleanJoin && joinKind === "AGENCY_ID"
-                ? cleanJoin
-                : null,
-            join_code:
-              accountType === "SOCIAL_MANAGER" && showJoin && cleanJoin && joinKind === "CODE_OR_KEY"
-                ? cleanJoin
-                : null,
+            join_agency_id: cleanJoinAgencyId || null,
           },
-          emailRedirectTo: `${siteUrl}/callback?next=${encodeURIComponent(next)}`,
+          emailRedirectTo: `${siteUrl}/callback`,
         },
       });
 
       if (signErr) {
         const m = signErr.message.toLowerCase();
         if (m.includes("already registered") || m.includes("user already registered")) {
+          setMsgType("error");
           setMsg("Un compte existe déjà avec cet email. Veuillez vous connecter.");
+          setLoading(false);
           return;
         }
         throw signErr;
       }
 
+      // Si confirmation email ON => pas de session immédiate
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
+        setMsgType("success");
         setMsg("Compte créé ✅ Veuillez vérifier votre email pour confirmer votre compte.");
+        setLoading(false);
         return;
       }
 
-      router.push(next);
+      // Si confirmation OFF
+      router.push("/dashboard");
     } catch (err: any) {
+      setMsgType("error");
       setMsg(err?.message ?? "Erreur inconnue");
     } finally {
       setLoading(false);
     }
   }
 
+  const hint =
+    accountType === "AGENCY"
+      ? "Créez votre agence. Vous pourrez ensuite inviter des Social Managers."
+      : "Créez votre compte Social Manager. Vous pourrez rejoindre une agence maintenant (optionnel) ou plus tard.";
+
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-2xl">
-        <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          {/* Header */}
-          <div className="p-6 sm:p-8 border-b border-slate-100">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-semibold text-slate-900">
-                  Créer un compte Jadoline
-                </h1>
-                <p className="text-sm text-slate-500 mt-1">
-                  Choisissez votre profil, puis complétez vos informations.
-                </p>
-              </div>
-
-              {/* Petit bouton discret vers login (optionnel). 
-                 Si vous ne voulez aucun lien, supprimez ce bloc. */}
-              <a
-                href="/login"
-                className="hidden sm:inline-flex items-center rounded-full border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:border-slate-300"
-              >
-                Se connecter
-              </a>
+    <div className="auth-wrap">
+      <div className="card auth-card">
+        <div className="auth-card-inner">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="auth-title">Créer un compte Jadoline</h1>
+              <p className="auth-subtitle">{hint}</p>
             </div>
-
-            {/* Choix profil côte à côte */}
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountType("AGENCY");
-                  setShowJoin(false);
-                  setJoinInput("");
-                }}
-                className={cn(
-                  "rounded-2xl border p-4 text-left transition",
-                  accountType === "AGENCY"
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white hover:border-slate-300"
-                )}
-              >
-                <div className="font-semibold text-base">Créer une agence</div>
-                <div className={cn("mt-1 text-xs", accountType === "AGENCY" ? "text-slate-200" : "text-slate-500")}>
-                  Pour gérer vos clients, membres et abonnements.
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAccountType("SOCIAL_MANAGER")}
-                className={cn(
-                  "rounded-2xl border p-4 text-left transition",
-                  accountType === "SOCIAL_MANAGER"
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white hover:border-slate-300"
-                )}
-              >
-                <div className="font-semibold text-base">Créer votre Social Manager</div>
-                <div
-                  className={cn("mt-1 text-xs", accountType === "SOCIAL_MANAGER" ? "text-slate-200" : "text-slate-500")}
-                >
-                  Pour travailler sur les comptes des agences.
-                </div>
-              </button>
-            </div>
-
-            {msg && (
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                {msg}
-              </div>
-            )}
+            <div className="pill">CRM • Multi-agence</div>
           </div>
 
-          {/* Form */}
-          <form onSubmit={onSubmit} className="p-6 sm:p-8 space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium text-slate-900">Nom complet</label>
+          {msg && (
+            <div
+              className={cn(
+                "alert",
+                msgType === "success" ? "alert-success" : "alert-error"
+              )}
+            >
+              {msg}
+            </div>
+          )}
+
+          {/* Choix type */}
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => setAccountType("AGENCY")}
+              className={cn("selectCard", accountType === "AGENCY" && "selectCardActive")}
+            >
+              <div className="selectCardTop">
+                <div className="selectTitle">Agence</div>
+                <span className="selectTag">Propriétaire</span>
+              </div>
+              <div className="selectDesc">
+                Créez votre agence, invitez votre équipe, gérez vos clients.
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAccountType("SOCIAL_MANAGER")}
+              className={cn(
+                "selectCard",
+                accountType === "SOCIAL_MANAGER" && "selectCardActive"
+              )}
+            >
+              <div className="selectCardTop">
+                <div className="selectTitle">Social Manager</div>
+                <span className="selectTag">Membre</span>
+              </div>
+              <div className="selectDesc">
+                Rejoignez une agence via un Agency ID (optionnel) ou plus tard.
+              </div>
+            </button>
+          </div>
+
+          <form onSubmit={onSubmit} className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Col gauche */}
+            <div className="card p-5">
+              <div className="card-title">Votre profil</div>
+              <p className="muted mt-1">Vous pourrez modifier ces infos plus tard.</p>
+
+              <div className="mt-4">
+                <label>Nom complet</label>
                 <input
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                  className="input"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Ex : Sana Zhani"
@@ -223,59 +188,41 @@ export default function RegisterClient() {
               </div>
 
               {accountType === "AGENCY" ? (
-                <div>
-                  <label className="text-sm font-medium text-slate-900">Nom de l’agence</label>
+                <div className="mt-4">
+                  <label>Nom de l’agence</label>
                   <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                    className="input"
                     value={agencyName}
                     onChange={(e) => setAgencyName(e.target.value)}
                     placeholder="Ex : Sana Com"
                     required
                   />
                 </div>
-              ) : (
-                <div className="flex items-end">
-                  {/* Bouton Ajouter demandé */}
-                  <button
-                    type="button"
-                    onClick={() => setShowJoin((v) => !v)}
-                    className={cn(
-                      "w-full rounded-xl px-4 py-2 text-sm font-semibold transition border",
-                      showJoin
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "bg-white text-slate-900 border-slate-200 hover:border-slate-300"
-                    )}
-                  >
-                    {showJoin ? "Retirer le rattachement" : "Ajouter une agence (optionnel)"}
-                  </button>
-                </div>
-              )}
-            </div>
+              ) : null}
 
-            {/* Champ join uniquement si Social Manager + showJoin */}
-            {accountType === "SOCIAL_MANAGER" && showJoin && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-900">Rattachement à une agence</p>
-                  <span className="text-xs text-slate-500">Agency ID / Code / Clé</span>
-                </div>
+              <div className="mt-4">
+                <label>Rejoindre une agence (optionnel)</label>
                 <input
-                  className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white"
-                  value={joinInput}
-                  onChange={(e) => setJoinInput(e.target.value)}
-                  placeholder="Collez l’Agency ID (UUID) ou une clé d’invitation"
+                  className="input"
+                  value={joinAgencyId}
+                  onChange={(e) => setJoinAgencyId(e.target.value)}
+                  placeholder="Agency ID (UUID)"
                 />
-                <p className="text-xs text-slate-500 mt-2">
-                  Vous pourrez aussi rejoindre une agence plus tard depuis votre profil.
+                <p className="muted mt-2">
+                  Si vous le remplissez, votre compte tentera de rejoindre l’agence au moment du callback.
                 </p>
               </div>
-            )}
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium text-slate-900">Email</label>
+            {/* Col droite */}
+            <div className="card p-5">
+              <div className="card-title">Informations de connexion</div>
+              <p className="muted mt-1">Utilisez un email professionnel si possible.</p>
+
+              <div className="mt-4">
+                <label>Email</label>
                 <input
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                  className="input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="email@exemple.com"
@@ -284,38 +231,96 @@ export default function RegisterClient() {
                 />
               </div>
 
-              <div>
-                <label className="text-sm font-medium text-slate-900">Mot de passe</label>
+              <div className="mt-4">
+                <label>Mot de passe</label>
                 <input
+                  className="input"
                   type="password"
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   autoComplete="new-password"
                   required
                 />
-                <p className="text-xs text-slate-500 mt-1">8 caractères minimum recommandés.</p>
+                <p className="muted mt-2">8 caractères minimum recommandés.</p>
               </div>
-            </div>
 
-            <button
-              disabled={loading}
-              className={cn(
-                "w-full rounded-xl px-4 py-3 text-sm font-semibold transition",
-                loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
-              )}
-              type="submit"
-            >
-              {loading ? "Création..." : "Créer mon compte"}
-            </button>
+              <button disabled={loading} className="btn btn-primary mt-5 w-full">
+                {loading ? "Création..." : "Créer mon compte"}
+              </button>
 
-            <div className="text-xs text-slate-500">
-              Après confirmation email, votre profil sera finalisé automatiquement.
+              <div className="mt-4 text-sm text-slate-600">
+                Déjà un compte ?{" "}
+                <a className="underline" href="/login">
+                  Connexion
+                </a>
+              </div>
+
+              <div className="tip-box mt-4">
+                <div style={{ fontWeight: 800 }}>Après confirmation email</div>
+                <div className="muted mt-1">
+                  Votre profil sera finalisé automatiquement et vous serez redirigé(e) vers votre espace.
+                </div>
+              </div>
             </div>
           </form>
         </div>
       </div>
+
+      {/* Styles locaux uniquement pour les cartes type */}
+      <style jsx>{`
+        .pill{
+          padding:10px 14px;
+          border-radius:999px;
+          font-weight:700;
+          font-size:12px;
+          background:rgba(2,6,23,.06);
+          color:#0f172a;
+          border:1px solid rgba(226,232,240,.9);
+        }
+        .selectCard{
+          text-align:left;
+          border-radius:18px;
+          padding:16px;
+          border:1px solid rgba(226,232,240,.9);
+          background:rgba(255,255,255,.7);
+          transition:all .18s ease;
+        }
+        .selectCard:hover{
+          transform: translateY(-1px);
+          border-color: rgba(99,102,241,.35);
+        }
+        .selectCardActive{
+          background: linear-gradient(90deg, rgba(15,23,42,.92), rgba(15,23,42,.88));
+          color:white;
+          border-color: rgba(15,23,42,.6);
+        }
+        .selectCardTop{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          margin-bottom:8px;
+        }
+        .selectTitle{
+          font-size:16px;
+          font-weight:800;
+        }
+        .selectTag{
+          font-size:12px;
+          font-weight:800;
+          padding:6px 10px;
+          border-radius:999px;
+          background: rgba(255,255,255,.12);
+          border: 1px solid rgba(255,255,255,.18);
+          color: inherit;
+        }
+        .selectDesc{
+          font-size:13px;
+          opacity: .9;
+          line-height:1.35;
+        }
+      `}</style>
     </div>
   );
 }
