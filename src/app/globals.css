@@ -1,187 +1,195 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root{
-  --ring: rgba(99,102,241,.18);
-  --shadow: 0 14px 40px rgba(2, 6, 23, .10);
-  --shadow2: 0 22px 60px rgba(2, 6, 23, .12);
+/* ===========================
+   GLOBAL RESET (OPTIONNEL)
+=========================== */
+* {
+  box-sizing: border-box;
 }
 
-body{
-  @apply antialiased text-slate-900;
+/* ===========================
+   BACKGROUND REGISTER
+=========================== */
+.register-bg {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background:
-    radial-gradient(900px 500px at 15% 12%, rgba(99,102,241,.20), transparent 55%),
-    radial-gradient(800px 480px at 85% 18%, rgba(59,130,246,.18), transparent 55%),
-    radial-gradient(700px 520px at 50% 95%, rgba(14,165,233,.14), transparent 60%),
-    linear-gradient(180deg, #f7f9ff 0%, #eef2ff 55%, #f8fafc 100%);
+    radial-gradient(circle at top left, #eef2ff 0%, transparent 45%),
+    radial-gradient(circle at bottom right, #e0f2fe 0%, transparent 45%),
+    linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+  padding: 24px;
 }
 
-a{ @apply text-indigo-600 hover:underline; }
-
-h1{
-  @apply text-3xl font-semibold text-slate-900;
-  letter-spacing:-0.03em;
-}
-label{ @apply block text-sm font-medium text-slate-700 mb-1; }
-.muted{ @apply text-sm text-slate-500; }
-.container{ @apply max-w-7xl mx-auto px-4; }
-
-/* Cards */
-.card{
-  @apply rounded-2xl border border-slate-200/70 bg-white/80;
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(8px);
-  box-shadow: var(--shadow);
-  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-}
-.card::before{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  background: radial-gradient(600px 140px at 20% 0%,
-    rgba(99,102,241,.35),
-    transparent 65%);
-  pointer-events:none;
-}
-.card::after{
-  content:"";
-  position:absolute;
-  inset:0;
-  background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,.25));
-  pointer-events:none;
-  opacity:.55;
-}
-.card > *{ position: relative; z-index: 1; }
-.card:hover{
-  transform: translateY(-2px);
-  border-color: rgba(99,102,241,.35);
-  box-shadow: var(--shadow2);
-}
-.card-title{ @apply text-lg font-semibold text-slate-900; }
-
-/* Inputs */
-.input{
-  @apply w-full rounded-xl border border-slate-200/80 px-3 py-2 text-sm text-slate-900 outline-none transition;
-  background: rgba(255,255,255,.85);
-}
-.input::placeholder{ @apply text-slate-400; }
-.input:focus{
-  @apply border-indigo-400;
-  box-shadow: 0 0 0 4px var(--ring);
-}
-.input:disabled{ @apply bg-slate-100 cursor-not-allowed opacity-70; }
-
-/* Buttons */
-.btn{
-  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2
-         text-sm font-semibold transition disabled:opacity-60 disabled:cursor-not-allowed;
-}
-.btn-primary{
-  @apply text-white;
-  background: linear-gradient(90deg, #4f46e5, #2563eb);
-  box-shadow: 0 14px 28px rgba(37,99,235,.20);
-}
-.btn-primary:hover{
-  filter: brightness(1.05);
-  box-shadow: 0 18px 36px rgba(37,99,235,.24);
-}
-.btn-ghost{
-  @apply text-slate-700;
-  background: rgba(2,6,23,.04);
-}
-.btn-ghost:hover{ background: rgba(2,6,23,.06); }
-
-/* Alerts */
-.alert{
-  margin-top:14px;
-  padding:12px 14px;
-  border-radius:16px;
-  border:1px solid rgba(226,232,240,.9);
-  background:#fff;
-}
-.alert-error{
-  border-color:rgba(248,113,113,.35);
-  background:rgba(254,226,226,.5);
-  color:#7f1d1d;
-}
-.alert-success{
-  border-color:rgba(34,197,94,.35);
-  background:rgba(220,252,231,.6);
-  color:#14532d;
+/* ===========================
+   CARD
+=========================== */
+.register-card {
+  width: 100%;
+  max-width: 460px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  border-radius: 24px;
+  padding: 40px 36px;
+  box-shadow:
+    0 20px 40px rgba(15, 23, 42, 0.08),
+    0 4px 12px rgba(15, 23, 42, 0.04);
+  animation: fadeUp 0.6s ease;
 }
 
-/* Tip box */
-.tip-box{
-  border:1px solid rgba(226,232,240,.9);
-  background:linear-gradient(135deg, rgba(99,102,241,.10), rgba(59,130,246,.08));
-  border-radius:18px;
-  padding:14px;
-  box-shadow: 0 10px 24px rgba(2,6,23,.06);
+/* ===========================
+   HEADER
+=========================== */
+.register-title {
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  color: #0f172a;
 }
 
-/* Profile */
-.profileTop{
-  display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap;
-}
-.profileLeft{
-  display:flex; align-items:center; gap:16px; min-width:0;
-}
-.avatarCircle{
-  width:72px; height:72px; border-radius:999px;
-  display:flex; align-items:center; justify-content:center;
-  font-weight:800; letter-spacing:.5px;
-  color:#0f172a;
-  background:linear-gradient(180deg, rgba(59,130,246,.18), rgba(2,6,23,.05));
-  border:1px solid rgba(226,232,240,.9);
-}
-.profileName{
-  font-size:26px; font-weight:800; color:#0f172a; line-height:1.1;
-}
-.profileEmail{ margin-top:6px; color:#475569; }
-.profileActions{ display:flex; gap:10px; flex-wrap:wrap; }
-
-.idRow{
-  display:grid;
-  grid-template-columns: 1fr auto;
-  gap:10px;
-  align-items:center;
+.register-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  text-align: center;
+  color: #64748b;
 }
 
-/* Badges */
-.badge{
-  display:inline-flex; align-items:center; gap:6px;
-  border-radius:999px; padding:6px 10px;
-  font-size:12px; font-weight:800;
-  border:1px solid rgba(226,232,240,.9);
-}
-.badge-gold{
-  background:rgba(203,160,115,.18);
-  border-color:rgba(203,160,115,.35);
-  color:#6b3f12;
-}
-.badge-success{
-  border-color: rgba(34,197,94,.35);
-  background: rgba(220,252,231,.6);
-  color:#14532d;
-}
-.badge-info{
-  border-color: rgba(99,102,241,.25);
-  background: rgba(224,231,255,.55);
-  color:#3730a3;
+/* ===========================
+   ACCOUNT TYPE SWITCH
+=========================== */
+.account-switch {
+  margin-top: 24px;
+  background: #f1f5f9;
+  border-radius: 14px;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 }
 
-/* Invites list rows */
-.inviteRow{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  border:1px solid rgba(226,232,240,.8);
-  background: rgba(255,255,255,.6);
-  border-radius: 16px;
-  padding: 10px 12px;
+.account-switch button {
+  height: 40px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.25s ease;
 }
-.inviteEmail{ font-weight:700; color:#0f172a; }
-.inviteMeta{ font-size:12px; }
+
+.account-switch button.active {
+  background: #ffffff;
+  color: #4f46e5;
+  box-shadow:
+    0 6px 16px rgba(79, 70, 229, 0.15),
+    0 1px 4px rgba(79, 70, 229, 0.12);
+}
+
+/* ===========================
+   FORM
+=========================== */
+.register-form {
+  margin-top: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ===========================
+   INPUTS
+=========================== */
+.input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  font-size: 14px;
+  color: #0f172a;
+  transition: all 0.2s ease;
+}
+
+.input::placeholder {
+  color: #94a3b8;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+/* ===========================
+   SUBMIT BUTTON
+=========================== */
+.register-btn {
+  margin-top: 10px;
+  height: 48px;
+  border-radius: 14px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow:
+    0 12px 24px rgba(79, 70, 229, 0.35);
+}
+
+.register-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 16px 32px rgba(79, 70, 229, 0.4);
+}
+
+.register-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ===========================
+   FOOTER
+=========================== */
+.register-footer {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.register-footer a {
+  color: #4f46e5;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.register-footer a:hover {
+  text-decoration: underline;
+}
+
+/* ===========================
+   ANIMATION
+=========================== */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===========================
+   MOBILE
+=========================== */
+@media (max-width: 480px) {
+  .register-card {
+    padding: 32px 24px;
+    border-radius: 20px;
+  }
+}
