@@ -1,4 +1,3 @@
-// src/app/(auth)/callback/CallbackClient.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -6,10 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 function pickRedirect(searchParams: ReturnType<typeof useSearchParams>) {
-  // optionnel: si tu veux supporter ?next=/dashboard
   const next = searchParams.get("next");
   if (next && next.startsWith("/")) return next;
-  return "/profile"; // ✅ par défaut
+  return "/profile";
 }
 
 export default function CallbackClient() {
@@ -27,39 +25,82 @@ export default function CallbackClient() {
     (async () => {
       try {
         const code = searchParams.get("code");
-        const errorDesc = searchParams.get("error_description");
         const error = searchParams.get("error");
+        const errorDesc = searchParams.get("error_description");
 
-        // 1) si Supabase renvoie une erreur OAuth
         if (error || errorDesc) {
           router.replace(`/login?error=${encodeURIComponent(error ?? "confirmation")}`);
           return;
         }
 
-        // 2) pas de code -> impossible d'échanger
         if (!code) {
           router.replace("/login?error=missing_code");
           return;
         }
 
-        // 3) échange code -> session
+        // 1️⃣ Échange code → session
         setStatus("Validation de la session...");
         const { error: exErr } = await supabase.auth.exchangeCodeForSession(code);
-
         if (exErr) {
           router.replace("/login?error=confirmation");
           return;
         }
 
-        // 4) session OK
+        // 2️⃣ Récupération utilisateur
+        setStatus("Préparation du profil...");
+        const { data: u, error: uErr } = await supabase.auth.getUser();
+        if (uErr || !u?.user) {
+          router.replace("/login?error=session");
+          return;
+        }
+
+        const user = u.user;
+        const md: any = user.user_metadata ?? {};
+
+        const accountType = md.account_type; // "AGENCY" | "SOCIAL_MANAGER"
+        const agencyName = md.agency_name ?? null;
+        const joinAgencyId = md.join_agency_id ?? null;
+
+        // ===============================
+        // 🏢 CAS AGENCY → créer l’agence
+        // ===============================
+        if (accountType === "AGENCY" && agencyName) {
+          setStatus("Création de votre agence...");
+
+          await supabase.rpc("create_agency_for_owner", {
+            p_agency_name: agencyName,
+          });
+
+          // nettoyage metadata
+          await supabase.auth.updateUser({
+            data: { agency_name: null },
+          });
+        }
+
+        // =====================================
+        // 👤 CAS SOCIAL MANAGER → join agence
+        // =====================================
+        if (accountType === "SOCIAL_MANAGER" && joinAgencyId) {
+          setStatus("Rejoindre l’agence...");
+
+          await supabase.rpc("join_with_agency_id", {
+            p_agency_id: joinAgencyId,
+          });
+
+          // nettoyage metadata
+          await supabase.auth.updateUser({
+            data: { join_agency_id: null },
+          });
+        }
+
+        // 3️⃣ Redirection finale
         setStatus("Redirection...");
-        const to = pickRedirect(searchParams);
-        router.replace(to);
+        router.replace(pickRedirect(searchParams));
       } catch (e) {
-        router.replace("/login?error=confirmation");
+        router.replace("/login?error=callback");
       }
     })();
-  }, [searchParams, router, supabase]);
+  }, [router, searchParams, supabase]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
