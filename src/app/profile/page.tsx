@@ -13,17 +13,14 @@ type ProfileRow = {
   role: string | null;
 };
 
-type AgencyRow = {
-  id: string;
-  name: string;
-};
+type AgencyRow = { id: string; name: string };
 
 type InviteRow = {
   id: string;
   agency_id: string;
   email: string;
   token: string;
-  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED" | string;
+  status: string;
   created_at: string;
 };
 
@@ -32,11 +29,7 @@ type MemberRow = {
   role: string;
   status: string | null;
   created_at: string | null;
-  profile: {
-    full_name: string | null;
-    avatar_url: string | null;
-    account_type: string | null;
-  } | null;
+  profile: { full_name: string | null; avatar_url: string | null; account_type: string | null } | null;
 };
 
 function cn(...s: Array<string | false | null | undefined>) {
@@ -52,11 +45,7 @@ function initials(name?: string | null) {
 
 function formatDate(d: string) {
   try {
-    return new Date(d).toLocaleDateString("fr-FR", {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    });
+    return new Date(d).toLocaleDateString("fr-FR", { year: "numeric", month: "short", day: "2-digit" });
   } catch {
     return d;
   }
@@ -79,11 +68,7 @@ function Avatar({
 }) {
   const s = `${size}px`;
   return (
-    <div
-      className={cn("crm-avatar overflow-hidden", className)}
-      style={{ width: s, height: s }}
-      aria-label="Avatar"
-    >
+    <div className={cn("crm-avatar overflow-hidden", className)} style={{ width: s, height: s }} aria-label="Avatar">
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -112,25 +97,27 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [agency, setAgency] = useState<AgencyRow | null>(null);
 
+  // Invitations: on affiche seulement au receveur (SM)
   const [invitesForMe, setInvitesForMe] = useState<InviteRow[]>([]);
-  const [invitesForAgency, setInvitesForAgency] = useState<InviteRow[]>([]);
 
+  // Members (AGENCY)
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
 
   const isAgency = profile?.account_type === "AGENCY";
 
-  // Join (SM)
+  // Join code
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
 
-  // Agency invite SM
+  // Agency invite SM by email
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
+
   const [editFullName, setEditFullName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editAgencyName, setEditAgencyName] = useState("");
@@ -140,9 +127,7 @@ export default function ProfilePage() {
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
 
-  // ✅ Switch modal
-  const [switchOpen, setSwitchOpen] = useState(false);
-  const [newAgencyName, setNewAgencyName] = useState("");
+  // Switch
   const [switchBusy, setSwitchBusy] = useState(false);
 
   // Toast
@@ -166,38 +151,45 @@ export default function ProfilePage() {
   async function loadMembers(agencyId: string) {
     setMembersLoading(true);
     try {
-      const { data, error } = await supabase
+      // 1) agency_members
+      const { data: am, error: amErr } = await supabase
         .from("agency_members")
-        .select(
-          `
-          user_id,
-          role,
-          status,
-          created_at,
-          profile:users_profile (
-            full_name,
-            avatar_url,
-            account_type
-          )
-        `
-        )
+        .select("user_id, role, status, created_at")
         .eq("agency_id", agencyId)
         .order("created_at", { ascending: false });
 
-      if (error) {
+      if (amErr) {
         setMembers([]);
-        setToast({ type: "err", msg: `Members: ${error.message}` });
+        setToast({ type: "err", msg: `Members: ${amErr.message}` });
         return;
       }
 
-      const rows = (data || []) as any[];
+      const ids = (am || []).map((x: any) => x.user_id);
+      if (ids.length === 0) {
+        setMembers([]);
+        return;
+      }
+
+      // 2) users_profile
+      const { data: ups, error: upErr } = await supabase
+        .from("users_profile")
+        .select("user_id, full_name, avatar_url, account_type")
+        .in("user_id", ids);
+
+      if (upErr) {
+        // pas bloquant
+      }
+
+      const map = new Map<string, any>();
+      (ups || []).forEach((u: any) => map.set(u.user_id, u));
+
       setMembers(
-        rows.map((r) => ({
-          user_id: r.user_id,
-          role: r.role,
-          status: r.status ?? null,
-          created_at: r.created_at ?? null,
-          profile: r.profile ?? null,
+        (am || []).map((m: any) => ({
+          user_id: m.user_id,
+          role: m.role,
+          status: m.status ?? null,
+          created_at: m.created_at ?? null,
+          profile: map.get(m.user_id) ?? null,
         }))
       );
     } finally {
@@ -231,6 +223,7 @@ export default function ProfilePage() {
     const pr = p as ProfileRow;
     setProfile(pr);
 
+    // Agency info
     let ag: AgencyRow | null = null;
     if (pr.agency_id) {
       const { data: a, error: aErr } = await supabase
@@ -242,29 +235,30 @@ export default function ProfilePage() {
     }
     setAgency(ag);
 
-    if (u.user.email) {
+    // Invitations only for receiver (SM)
+    if (!isAgency && u.user.email) {
       const { data: invMe, error: invMeErr } = await supabase
         .from("agency_invites")
         .select("id, agency_id, email, token, status, created_at")
-        .eq("email", u.user.email)
+        .eq("email", u.user.email.toLowerCase())
         .eq("status", "PENDING")
         .order("created_at", { ascending: false });
-      setInvitesForMe(!invMeErr ? ((invMe || []) as InviteRow[]) : []);
+
+      if (invMeErr) {
+        setInvitesForMe([]);
+        // Si tu vois ici "row level security", c'est la preuve que la policy SELECT manque
+        // (voir SQL section A)
+      } else {
+        setInvitesForMe((invMe || []) as InviteRow[]);
+      }
     } else {
       setInvitesForMe([]);
     }
 
+    // Members only for agency
     if (pr.account_type === "AGENCY" && pr.agency_id) {
-      const { data: invAg, error: invAgErr } = await supabase
-        .from("agency_invites")
-        .select("id, agency_id, email, token, status, created_at")
-        .eq("agency_id", pr.agency_id)
-        .eq("status", "PENDING")
-        .order("created_at", { ascending: false });
-      setInvitesForAgency(!invAgErr ? ((invAg || []) as InviteRow[]) : []);
       await loadMembers(pr.agency_id);
     } else {
-      setInvitesForAgency([]);
       setMembers([]);
     }
 
@@ -319,7 +313,6 @@ export default function ProfilePage() {
     }
   }
 
-  // ✅ Invitation SM (RPC existe maintenant)
   async function inviteSocialManagerByEmail() {
     const em = inviteEmail.trim().toLowerCase();
     if (!em || !isValidEmail(em)) {
@@ -333,6 +326,7 @@ export default function ProfilePage() {
 
     setInviteBusy(true);
     try {
+      // IMPORTANT: la function doit être invite_social_manager(p_email text)
       const { error } = await supabase.rpc("invite_social_manager", { p_email: em });
       if (error) {
         setToast({ type: "err", msg: `Invitation: ${error.message}` });
@@ -366,23 +360,12 @@ export default function ProfilePage() {
     await loadAll();
   }
 
-  async function approveInviteForAgency(inviteId: string) {
-    const { error } = await supabase.rpc("approve_agency_invite", { p_invite_id: inviteId });
-    if (error) {
-      setToast({ type: "err", msg: `Erreur: ${error.message}` });
-      return;
-    }
-    setToast({ type: "ok", msg: "Membre ajouté ✅" });
-    await loadAll();
-  }
-
   async function uploadAvatar(file: File) {
     if (!profile) throw new Error("Profile introuvable");
+
     const bucket = "avatars";
     const maxMB = 3;
-    if (file.size > maxMB * 1024 * 1024) {
-      throw new Error(`Image trop grande (max ${maxMB}MB).`);
-    }
+    if (file.size > maxMB * 1024 * 1024) throw new Error(`Image trop grande (max ${maxMB}MB).`);
 
     const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
     const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
@@ -418,10 +401,7 @@ export default function ProfilePage() {
 
       const { error: pErr } = await supabase
         .from("users_profile")
-        .update({
-          full_name: editFullName.trim() || null,
-          avatar_url: newAvatarUrl,
-        })
+        .update({ full_name: editFullName.trim() || null, avatar_url: newAvatarUrl })
         .eq("user_id", profile.user_id);
 
       if (pErr) {
@@ -461,23 +441,15 @@ export default function ProfilePage() {
     }
   }
 
-  // ✅ Switch submit (RPC avec p_agency_name)
-  async function submitSwitchToAgency() {
-    const nm = newAgencyName.trim();
-    if (nm.length < 2) {
-      setToast({ type: "err", msg: "Nom agence requis (min 2 caractères)." });
-      return;
-    }
-
+  async function switchToAgency() {
     setSwitchBusy(true);
     try {
-      const { error } = await supabase.rpc("switch_to_agency", { p_agency_name: nm });
+      const { error } = await supabase.rpc("switch_to_agency");
       if (error) {
-        setToast({ type: "err", msg: "Switch: " + error.message });
+        setToast({ type: "err", msg: "Switch indisponible: " + error.message });
         return;
       }
-      setToast({ type: "ok", msg: "Agence créée ✅" });
-      setSwitchOpen(false);
+      setToast({ type: "ok", msg: "Votre agence a été créée ✅" });
       await loadAll();
     } finally {
       setSwitchBusy(false);
@@ -487,8 +459,7 @@ export default function ProfilePage() {
   const heroTitle = isAgency ? agency?.name || "Mon agence" : profile?.full_name || "Mon profil";
   const heroSub = isAgency ? `Compte Agence • ${profile?.full_name || "Owner"}` : "Social Manager";
 
-  const invites = isAgency ? invitesForAgency : invitesForMe;
-  const inviteCount = invites.length;
+  const inviteCount = invitesForMe.length;
 
   return (
     <div className="crm-shell">
@@ -500,10 +471,11 @@ export default function ProfilePage() {
 
       <div className="crm-container">
         <div className="crm-card overflow-hidden">
+          {/* HERO */}
           <div className={cn("crm-hero", isAgency ? "crm-hero-agency" : "crm-hero-sm")}>
             <div className="relative z-[1] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                <Avatar name={isAgency ? agency?.name : profile?.full_name} url={isAgency ? null : profile?.avatar_url} size={58} />
+                <Avatar name={heroTitle} url={profile?.avatar_url} size={58} />
                 <div className="min-w-0">
                   <div className="text-2xl font-semibold truncate">{heroTitle}</div>
                   <div className="text-white/85 text-sm mt-1">{heroSub}</div>
@@ -512,145 +484,153 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <button onClick={openEdit} className="crm-btn-glass">✏️ Modifier profil</button>
-                <button onClick={() => loadAll()} className="crm-btn-glass">⟳ Actualiser</button>
+                <button onClick={openEdit} className="crm-btn-glass">
+                  ✏️ Modifier profil
+                </button>
+                <button onClick={() => loadAll()} className="crm-btn-glass">
+                  ⟳ Actualiser
+                </button>
               </div>
             </div>
           </div>
 
+          {/* CONTENT */}
           <div className="p-5 sm:p-7">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="crm-card-soft p-5">
-                <div className="text-sm font-semibold">{isAgency ? "Identifiants agence" : "Rejoindre une agence"}</div>
-                <div className="text-sm text-slate-600 mt-1">
-                  {isAgency ? "Partagez votre identifiant d’agence." : "Entrez le code fourni par une agence."}
-                </div>
+            {/* ====== SOCIAL MANAGER VIEW ====== */}
+            {!isAgency && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Join */}
+                <div className="crm-card-soft p-5">
+                  <div className="text-sm font-semibold">Rejoindre une agence</div>
+                  <div className="text-sm text-slate-600 mt-1">Entrez le code fourni par une agence.</div>
 
-                {isAgency ? (
-                  <div className="mt-4 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="crm-pill flex-1">
-                        ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
-                      </div>
-                      <button onClick={() => profile?.agency_id && copyText(profile.agency_id)} className="crm-btn-soft">
-                        Copier
-                      </button>
-                    </div>
-                  </div>
-                ) : (
                   <div className="mt-4 flex items-center gap-2">
-                    <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Code agence" className="crm-input" />
+                    <input
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value)}
+                      placeholder="Code agence"
+                      className="crm-input"
+                    />
                     <button onClick={requestJoin} disabled={joinBusy} className="crm-btn-primary">
                       {joinBusy ? "..." : "Rejoindre"}
                     </button>
                   </div>
-                )}
 
-                {!isAgency && (
-                  <div className="mt-4 space-y-2">
-                    <button
-                      onClick={() => {
-                        setNewAgencyName("");
-                        setSwitchOpen(true);
-                      }}
-                      className="crm-btn-primary w-full"
-                    >
-                      Créer mon agence (Switch)
-                    </button>
-                    <div className="text-xs text-slate-500">
-                      Le switch crée votre agence et vous passe en mode <b>AGENCY</b>.
-                    </div>
+                  {/* Switch séparé (pour éviter confusion) */}
+                  <div className="mt-4 crm-divider" />
+                  <div className="text-sm font-semibold mt-4">Créer mon agence</div>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Transformez votre compte en <b>AGENCY</b> (vous gardez vos données).
                   </div>
-                )}
-              </div>
-
-              <div className="crm-card-soft p-5 lg:col-span-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold">Invitations</div>
-                    <div className="text-sm text-slate-600 mt-1">
-                      {isAgency ? "Demandes reçues pour rejoindre votre agence." : "Invitations reçues pour rejoindre une agence."}
-                    </div>
-                  </div>
-                  <span className="crm-badge">{inviteCount}</span>
+                  <button onClick={switchToAgency} disabled={switchBusy} className="crm-btn-primary w-full mt-4">
+                    {switchBusy ? "..." : "Créer mon agence (Switch)"}
+                  </button>
                 </div>
 
-                <div className="mt-4 space-y-3">
-                  {inviteCount === 0 ? (
-                    <div className="crm-empty">Aucune invitation en attente.</div>
-                  ) : (
-                    invites.map((inv) => (
-                      <div key={inv.id} className="crm-invite">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="font-extrabold truncate">{inv.email}</div>
-                            <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
-                          </div>
-
-                          <div className="flex gap-2">
-                            {isAgency ? (
-                              <>
-                                <button onClick={() => approveInviteForAgency(inv.id)} className="crm-btn-ok">Accepter</button>
-                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">Refuser</button>
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">Accepter</button>
-                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">Refuser</button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {loading && <div className="mt-4 text-sm text-slate-600">Chargement…</div>}
-              </div>
-            </div>
-
-            {isAgency && (
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="crm-card-soft p-5">
-                  <div className="text-sm font-semibold">Inviter Social Manager</div>
-                  <div className="text-sm text-slate-600 mt-1">Entrez l’email du Social Manager (doit exister dans Jadoline).</div>
-
-                  <div className="mt-4 space-y-2">
-                    <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="email@exemple.com" className="crm-input" />
-                    <button onClick={inviteSocialManagerByEmail} disabled={inviteBusy} className="crm-btn-primary w-full">
-                      {inviteBusy ? "Envoi..." : "Envoyer invitation"}
-                    </button>
-                    <div className="text-xs text-slate-500">L’invitation apparaîtra dans “Invitations”.</div>
-                  </div>
-                </div>
-
+                {/* Invitations (receveur seulement) */}
                 <div className="crm-card-soft p-5 lg:col-span-2">
                   <div className="flex items-center justify-between">
                     <div>
+                      <div className="text-sm font-semibold">Invitations reçues</div>
+                      <div className="text-sm text-slate-600 mt-1">Invitations en attente pour rejoindre une agence.</div>
+                    </div>
+                    <span className="crm-badge">{inviteCount}</span>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {inviteCount === 0 ? (
+                      <div className="crm-empty">Aucune invitation en attente.</div>
+                    ) : (
+                      invitesForMe.map((inv) => (
+                        <div key={inv.id} className="crm-invite">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="font-extrabold truncate">{inv.email}</div>
+                              <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">
+                                Accepter
+                              </button>
+                              <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
+                                Refuser
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {loading && <div className="mt-4 text-sm text-slate-600">Chargement…</div>}
+                </div>
+              </div>
+            )}
+
+            {/* ====== AGENCY VIEW ====== */}
+            {isAgency && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Identifiants */}
+                <div className="crm-card-soft p-5">
+                  <div className="text-sm font-semibold">Identifiant agence</div>
+                  <div className="text-sm text-slate-600 mt-1">Partagez cet ID à vos Social Managers.</div>
+
+                  <div className="mt-4 flex items-center gap-2">
+                    <div className="crm-pill flex-1">
+                      ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
+                    </div>
+                    <button onClick={() => profile?.agency_id && copyText(profile.agency_id)} className="crm-btn-soft">
+                      Copier
+                    </button>
+                  </div>
+                </div>
+
+                {/* Invite */}
+                <div className="crm-card-soft p-5">
+                  <div className="text-sm font-semibold">Inviter Social Manager</div>
+                  <div className="text-sm text-slate-600 mt-1">Entrez l’email du Social Manager (doit exister).</div>
+
+                  <div className="mt-4 space-y-2">
+                    <input
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="email@exemple.com"
+                      className="crm-input"
+                    />
+                    <button onClick={inviteSocialManagerByEmail} disabled={inviteBusy} className="crm-btn-primary w-full">
+                      {inviteBusy ? "Envoi..." : "Envoyer invitation"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Team */}
+                <div className="crm-card-soft p-5">
+                  <div className="flex items-center justify-between">
+                    <div>
                       <div className="text-sm font-semibold">Équipe Social Managers</div>
-                      <div className="text-sm text-slate-600 mt-1">Membres actuels de l’agence.</div>
+                      <div className="text-sm text-slate-600 mt-1">Membres actuels.</div>
                     </div>
                     <span className="crm-badge">{members.length}</span>
                   </div>
 
                   <div className="mt-4">
                     {membersLoading ? (
-                      <div className="text-sm text-slate-600">Chargement de l’équipe…</div>
+                      <div className="text-sm text-slate-600">Chargement…</div>
                     ) : members.length === 0 ? (
                       <div className="crm-empty">Aucun membre pour le moment.</div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-2">
                         {members.map((m) => {
                           const nm = m.profile?.full_name || m.user_id.slice(0, 8);
-                          const at = m.profile?.account_type || "";
                           return (
                             <div key={m.user_id} className="crm-invite">
                               <div className="flex items-center gap-3">
-                                <Avatar name={nm} url={m.profile?.avatar_url ?? null} size={46} className="text-sm" />
+                                <Avatar name={nm} url={m.profile?.avatar_url ?? null} size={44} className="text-sm" />
                                 <div className="min-w-0">
                                   <div className="font-extrabold truncate">{nm}</div>
-                                  <div className="text-sm text-slate-600 mt-1">{at || "MEMBER"} • {m.role} • {m.status || "active"}</div>
+                                  <div className="text-sm text-slate-600 mt-1">
+                                    {m.role} • {m.status || "ACTIVE"}
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -660,9 +640,13 @@ export default function ProfilePage() {
                     )}
                   </div>
 
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">Ouvrir Récap</button>
-                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">Dashboard</button>
+                  <div className="mt-4 flex gap-2 flex-wrap">
+                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">
+                      Ouvrir Récap
+                    </button>
+                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
+                      Dashboard
+                    </button>
                   </div>
                 </div>
               </div>
@@ -679,7 +663,9 @@ export default function ProfilePage() {
                   <div className="text-lg font-black">Modifier profil</div>
                   <div className="text-sm text-slate-600 mt-1">Nom, email, photo{isAgency ? ", agence" : ""}</div>
                 </div>
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">✕</button>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
+                  ✕
+                </button>
               </div>
 
               <div className="p-6 space-y-4">
@@ -739,44 +725,11 @@ export default function ProfilePage() {
               </div>
 
               <div className="crm-modal-foot">
-                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">Annuler</button>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
+                  Annuler
+                </button>
                 <button onClick={saveEdit} disabled={saveBusy || avatarBusy} className="crm-btn-primary">
                   {saveBusy || avatarBusy ? "Enregistrement..." : "Enregistrer"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ✅ MODAL SWITCH */}
-        {switchOpen && (
-          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4">
-            <div className="crm-modal">
-              <div className="crm-modal-head">
-                <div>
-                  <div className="text-lg font-black">Créer mon agence</div>
-                  <div className="text-sm text-slate-600 mt-1">Choisissez un nom (modifiable après).</div>
-                </div>
-                <button onClick={() => setSwitchOpen(false)} className="crm-btn-soft">✕</button>
-              </div>
-
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Nom de l’agence</label>
-                  <input
-                    value={newAgencyName}
-                    onChange={(e) => setNewAgencyName(e.target.value)}
-                    className="crm-input mt-2"
-                    placeholder="Ex: Ryhem Agency"
-                  />
-                </div>
-                <div className="text-xs text-slate-500">Vos invitations en attente ne seront pas supprimées.</div>
-              </div>
-
-              <div className="crm-modal-foot">
-                <button onClick={() => setSwitchOpen(false)} className="crm-btn-soft">Annuler</button>
-                <button onClick={submitSwitchToAgency} disabled={switchBusy} className="crm-btn-primary">
-                  {switchBusy ? "Création..." : "Créer"}
                 </button>
               </div>
             </div>
