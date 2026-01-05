@@ -30,12 +30,17 @@ type InviteRow = {
   accepted_at: string | null;
 };
 
+function cn(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
+}
+
 function initials(name?: string | null) {
   const n = (name || "").trim();
   if (!n) return "JD";
   const parts = n.split(/\s+/).slice(0, 2);
-  return parts.map((p) => p[0]?.toUpperCase()).join("");
+  return parts.map((p) => (p?.[0] || "").toUpperCase()).join("");
 }
+
 function formatDate(d: string) {
   try {
     return new Date(d).toLocaleDateString("fr-FR", {
@@ -46,9 +51,6 @@ function formatDate(d: string) {
   } catch {
     return d;
   }
-}
-function cn(...s: Array<string | false | null | undefined>) {
-  return s.filter(Boolean).join(" ");
 }
 
 export default function ProfilePage() {
@@ -62,15 +64,12 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [agency, setAgency] = useState<AgencyRow | null>(null);
 
-  // Invitations reçues par l’utilisateur (SM): agency_invites.email = user.email
   const [invitesForMe, setInvitesForMe] = useState<InviteRow[]>([]);
-
-  // Invitations reçues par l’agence (AGENCY): agency_invites.agency_id = my agency_id
   const [invitesForAgency, setInvitesForAgency] = useState<InviteRow[]>([]);
 
   const isAgency = profile?.account_type === "AGENCY";
 
-  // Join request
+  // Join
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
 
@@ -121,7 +120,7 @@ export default function ProfilePage() {
     const pr = p as ProfileRow;
     setProfile(pr);
 
-    // Agency (si lié)
+    // Agency if linked
     if (pr.agency_id) {
       const { data: a, error: aErr } = await supabase
         .from("agencies")
@@ -256,7 +255,7 @@ export default function ProfilePage() {
         return;
       }
 
-      // 2) update agency name (si AGENCY)
+      // 2) update agency name (if AGENCY)
       if (isAgency && profile.agency_id) {
         const newName = editAgencyName.trim();
         if (newName) {
@@ -271,7 +270,7 @@ export default function ProfilePage() {
         }
       }
 
-      // 3) update auth email (si changé)
+      // 3) update auth email (if changed)
       const newEmail = editEmail.trim();
       if (newEmail && newEmail !== (userEmail ?? "")) {
         const { error: eErr } = await supabase.auth.updateUser({ email: newEmail });
@@ -306,22 +305,26 @@ export default function ProfilePage() {
   }, [profile?.full_name, isAgency]);
 
   const inviteCount = isAgency ? invitesForAgency.length : invitesForMe.length;
+  const invites = isAgency ? invitesForAgency : invitesForMe;
 
   return (
-    <div className="min-h-screen appShell">
+    <div className="crm-shell">
       {/* Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50">
-          <div className={cn("toast", toast.type === "ok" ? "toastOk" : "toastErr")}>{toast.msg}</div>
+          <div className={cn("crm-toast", toast.type === "ok" ? "crm-toast-ok" : "crm-toast-err")}>
+            {toast.msg}
+          </div>
         </div>
       )}
 
-      <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
-        <div className="cardBig overflow-hidden">
-          <div className={cn("profileHero", isAgency ? "heroAgency" : "heroSm")}>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="crm-container">
+        <div className="crm-card overflow-hidden">
+          {/* HERO */}
+          <div className={cn("crm-hero", isAgency ? "crm-hero-agency" : "crm-hero-sm")}>
+            <div className="relative z-[1] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4 min-w-0">
-                <div className="avatarHero">{initials(isAgency ? agency?.name : profile?.full_name)}</div>
+                <div className="crm-avatar">{initials(isAgency ? agency?.name : profile?.full_name)}</div>
                 <div className="min-w-0">
                   <div className="text-2xl font-semibold truncate">{headerTitle}</div>
                   <div className="text-white/85 text-sm mt-1">{headerSubtitle}</div>
@@ -330,20 +333,17 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex gap-2">
-                <button onClick={openEdit} className="btnGlass">
-                  ✏️ Modifier profil
-                </button>
-                <button onClick={() => loadAll()} className="btnGlass">
-                  ⟳ Actualiser
-                </button>
+                <button onClick={openEdit} className="crm-btn-glass">✏️ Modifier</button>
+                <button onClick={() => loadAll()} className="crm-btn-glass">⟳ Actualiser</button>
               </div>
             </div>
           </div>
 
-          <div className="p-6 sm:p-8">
+          {/* CONTENT */}
+          <div className="p-5 sm:p-7">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Accès agence */}
-              <div className="card p-5">
+              {/* ACCESS AGENCY */}
+              <div className="crm-card-soft p-5">
                 <div className="text-sm font-semibold">Accès agence</div>
                 <div className="text-sm text-slate-600 mt-1">
                   {isAgency ? "Votre ID agence à partager." : "Rejoindre une agence via code (demande en attente)."}
@@ -351,12 +351,12 @@ export default function ProfilePage() {
 
                 {isAgency ? (
                   <div className="mt-4 flex items-center gap-2">
-                    <div className="pill flex-1">
-                      ID Agence: <span className="font-medium">{profile?.agency_id ?? "—"}</span>
+                    <div className="crm-pill flex-1">
+                      ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
                     </div>
                     <button
                       onClick={() => profile?.agency_id && copyText(profile.agency_id)}
-                      className="btnSoft"
+                      className="crm-btn-soft"
                     >
                       Copier
                     </button>
@@ -367,21 +367,21 @@ export default function ProfilePage() {
                       value={joinCode}
                       onChange={(e) => setJoinCode(e.target.value)}
                       placeholder="Code agence (join_code)"
-                      className="input"
+                      className="crm-input"
                     />
-                    <button onClick={requestJoin} disabled={joinBusy} className="btnPrimary">
+                    <button onClick={requestJoin} disabled={joinBusy} className="crm-btn-primary">
                       {joinBusy ? "..." : "Rejoindre"}
                     </button>
                   </div>
                 )}
 
                 <div className="mt-4 text-xs text-slate-500">
-                  Astuce: on recommande d’utiliser le <b>join_code</b> au lieu du UUID.
+                  Conseillé: utiliser le <b>join_code</b> (plus simple que UUID).
                 </div>
               </div>
 
-              {/* Invitations */}
-              <div className="card p-5 lg:col-span-2">
+              {/* INVITES */}
+              <div className="crm-card-soft p-5 lg:col-span-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-semibold">Invitations</div>
@@ -391,37 +391,39 @@ export default function ProfilePage() {
                         : "Invitations reçues pour rejoindre une agence."}
                     </div>
                   </div>
-                  <span className="badgeCount">{inviteCount}</span>
+                  <span className="crm-badge">{inviteCount}</span>
                 </div>
 
                 <div className="mt-4 space-y-3">
                   {inviteCount === 0 ? (
-                    <div className="emptyBox">Aucune invitation en attente.</div>
+                    <div className="crm-empty">Aucune invitation en attente.</div>
                   ) : (
-                    (isAgency ? invitesForAgency : invitesForMe).map((inv) => (
-                      <div key={inv.id} className="inviteCard">
+                    invites.map((inv) => (
+                      <div key={inv.id} className="crm-invite">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="min-w-0">
-                            <div className="font-medium truncate">{inv.email}</div>
-                            <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
+                            <div className="font-extrabold truncate">{inv.email}</div>
+                            <div className="text-sm text-slate-600 mt-1">
+                              Reçu le {formatDate(inv.created_at)}
+                            </div>
                           </div>
 
                           <div className="flex gap-2">
                             {isAgency ? (
                               <>
-                                <button onClick={() => approveInviteForAgency(inv.id)} className="btnOk">
+                                <button onClick={() => approveInviteForAgency(inv.id)} className="crm-btn-ok">
                                   Accepter
                                 </button>
-                                <button onClick={() => rejectInvite(inv.id)} className="btnDanger">
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
                                   Refuser
                                 </button>
                               </>
                             ) : (
                               <>
-                                <button onClick={() => acceptInviteForMe(inv.token)} className="btnOk">
+                                <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">
                                   Accepter
                                 </button>
-                                <button onClick={() => rejectInvite(inv.id)} className="btnDanger">
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
                                   Refuser
                                 </button>
                               </>
@@ -431,7 +433,7 @@ export default function ProfilePage() {
 
                         {!isAgency && (
                           <div className="mt-3 text-xs text-slate-500">
-                            (Vous pouvez aussi accepter via le lien <b>/invite?token=…</b>)
+                            (Vous pouvez aussi accepter via <b>/invite?token=…</b>)
                           </div>
                         )}
                       </div>
@@ -441,45 +443,45 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* Bottom */}
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="card p-5">
+            {/* BOTTOM */}
+            <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="crm-card-soft p-5">
                 <div className="text-sm font-semibold">Type de compte</div>
-                <div className="mt-2 inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm">
-                  <span>{isAgency ? "🏢 Agence" : "👤 Social Manager"}</span>
+                <div className="mt-3 inline-flex items-center gap-2 crm-pill">
+                  <span className="font-extrabold">{isAgency ? "🏢 Agence" : "👤 Social Manager"}</span>
                   {profile?.role ? <span className="text-slate-600">• {profile.role}</span> : null}
                 </div>
 
                 <div className="mt-4 text-sm text-slate-600">
                   {isAgency
                     ? "Vous gérez les demandes d’accès ici via Invitations."
-                    : "Vos collaborations seront visibles dans la page Récap."}
+                    : "Vos collaborations détaillées seront dans la page Récap."}
                 </div>
 
-                <div className="mt-5 flex gap-2">
-                  <button onClick={() => router.push("/recap")} className="btnSoft">
-                    Aller à Récap
-                  </button>
-                  <button onClick={() => router.push("/dashboard")} className="btnSoft">
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
                     Dashboard
+                  </button>
+                  <button onClick={() => router.push("/recap")} className="crm-btn-soft">
+                    Récap
                   </button>
                 </div>
               </div>
 
-              <div className="card p-5 lg:col-span-2">
+              <div className="crm-card-soft p-5 lg:col-span-2">
                 <div className="text-sm font-semibold">Résumé</div>
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="statCard">
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="crm-card-soft p-4">
                     <div className="text-xs text-slate-500">Invitations en attente</div>
-                    <div className="text-2xl font-semibold mt-1">{inviteCount}</div>
+                    <div className="text-2xl font-black mt-1">{inviteCount}</div>
                   </div>
-                  <div className="statCard">
+                  <div className="crm-card-soft p-4">
                     <div className="text-xs text-slate-500">Agence liée</div>
-                    <div className="text-sm font-medium mt-2 truncate">{agency?.name ?? "—"}</div>
+                    <div className="text-sm font-extrabold mt-2 truncate">{agency?.name ?? "—"}</div>
                   </div>
-                  <div className="statCard">
-                    <div className="text-xs text-slate-500">Identifiant</div>
-                    <div className="text-sm font-medium mt-2 truncate">{profile?.user_id ?? "—"}</div>
+                  <div className="crm-card-soft p-4">
+                    <div className="text-xs text-slate-500">User ID</div>
+                    <div className="text-sm font-extrabold mt-2 truncate">{profile?.user_id ?? "—"}</div>
                   </div>
                 </div>
 
@@ -489,39 +491,39 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* MODAL */}
+        {/* MODAL EDIT */}
         {editOpen && (
           <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4">
-            <div className="modalBox">
-              <div className="modalHead">
+            <div className="crm-modal">
+              <div className="crm-modal-head">
                 <div>
-                  <div className="text-lg font-semibold">Modifier profil</div>
+                  <div className="text-lg font-black">Modifier profil</div>
                   <div className="text-sm text-slate-600 mt-1">
                     Nom, email, avatar{isAgency ? ", agence" : ""}
                   </div>
                 </div>
-                <button onClick={() => setEditOpen(false)} className="btnSoft">
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
                   ✕
                 </button>
               </div>
 
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="text-sm font-medium">Nom du profil</label>
+                  <label className="text-sm font-bold">Nom du profil</label>
                   <input
                     value={editFullName}
                     onChange={(e) => setEditFullName(e.target.value)}
-                    className="input mt-2"
+                    className="crm-input mt-2"
                     placeholder="Votre nom"
                   />
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Email</label>
+                  <label className="text-sm font-bold">Email</label>
                   <input
                     value={editEmail}
                     onChange={(e) => setEditEmail(e.target.value)}
-                    className="input mt-2"
+                    className="crm-input mt-2"
                     placeholder="email@exemple.com"
                   />
                   <div className="text-xs text-slate-500 mt-2">
@@ -530,33 +532,33 @@ export default function ProfilePage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Avatar URL</label>
+                  <label className="text-sm font-bold">Avatar URL</label>
                   <input
                     value={editAvatarUrl}
                     onChange={(e) => setEditAvatarUrl(e.target.value)}
-                    className="input mt-2"
+                    className="crm-input mt-2"
                     placeholder="https://..."
                   />
                 </div>
 
                 {isAgency && (
                   <div>
-                    <label className="text-sm font-medium">Nom de l’agence</label>
+                    <label className="text-sm font-bold">Nom de l’agence</label>
                     <input
                       value={editAgencyName}
                       onChange={(e) => setEditAgencyName(e.target.value)}
-                      className="input mt-2"
+                      className="crm-input mt-2"
                       placeholder="Nom agence"
                     />
                   </div>
                 )}
               </div>
 
-              <div className="modalFoot">
-                <button onClick={() => setEditOpen(false)} className="btnSoft">
+              <div className="crm-modal-foot">
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
                   Annuler
                 </button>
-                <button onClick={saveEdit} disabled={saveBusy} className="btnPrimary">
+                <button onClick={saveEdit} disabled={saveBusy} className="crm-btn-primary">
                   {saveBusy ? "Enregistrement..." : "Enregistrer"}
                 </button>
               </div>
