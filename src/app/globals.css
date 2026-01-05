@@ -1,8 +1,51 @@
-/* =========================
-   REGISTER / LOGIN – ADD
-========================= */
+/* =====================================================
+   JADOLINE CRM – GLOBAL CSS (FINAL)
+   Compatible AUTH / DASHBOARD layouts
+===================================================== */
 
-.register-bg {
+/* ---------- RESET ---------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+  line-height: 1.5;
+}
+
+/* ---------- VARIABLES ---------- */
+:root {
+  --primary: #4f46e5;
+  --primary-dark: #4338ca;
+  --primary-light: #eef2ff;
+
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --border: #e5e7eb;
+
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #f59e0b;
+}
+
+/* =====================================================
+   LAYOUT ISOLATION (CRITICAL)
+===================================================== */
+
+.auth-layout {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -11,32 +54,65 @@
     radial-gradient(circle at top left, #eef2ff 0%, transparent 45%),
     radial-gradient(circle at bottom right, #e0f2fe 0%, transparent 45%),
     linear-gradient(135deg, #f8fafc, #ffffff);
+}
+
+.dashboard-layout {
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.dashboard-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.dashboard-main {
+  flex: 1;
+  padding: 24px 32px;
+  overflow-x: hidden;
+}
+
+/* Empêche toute fuite auth → dashboard */
+.dashboard-layout .register-bg,
+.dashboard-layout .register-card {
+  display: none !important;
+}
+
+/* =====================================================
+   AUTH – REGISTER / LOGIN
+===================================================== */
+
+.register-bg {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
 }
 
 .register-card {
   width: 100%;
   max-width: 460px;
-  background: #ffffff;
+  background: var(--card);
   border-radius: 24px;
   padding: 40px 36px;
   box-shadow:
     0 20px 40px rgba(15, 23, 42, 0.08),
     0 4px 12px rgba(15, 23, 42, 0.04);
+  animation: fadeUp 0.4s ease;
 }
 
 .register-title {
   text-align: center;
   font-size: 22px;
   font-weight: 600;
-  color: #0f172a;
 }
 
 .register-subtitle {
   text-align: center;
   margin-top: 4px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .account-switch {
@@ -55,13 +131,13 @@
   background: transparent;
   font-size: 13px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .account-switch button.active {
   background: #ffffff;
-  color: #4f46e5;
+  color: var(--primary);
   box-shadow: 0 6px 16px rgba(79, 70, 229, 0.15);
 }
 
@@ -72,41 +148,157 @@
   gap: 14px;
 }
 
+/* ---------- INPUT ---------- */
 .input {
   width: 100%;
   height: 46px;
   padding: 0 14px;
   border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
   background: #ffffff;
   font-size: 14px;
+  color: var(--text-main);
+}
+
+.input::placeholder {
+  color: #94a3b8;
 }
 
 .input:focus {
   outline: none;
-  border-color: #4f46e5;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 
-.register-btn {
+/* ---------- BUTTON ---------- */
+.register-btn,
+.btn-primary {
   height: 48px;
   border-radius: 14px;
   border: none;
-  background: linear-gradient(135deg, #4f46e5, #4338ca);
+  background: linear-gradient(
+    135deg,
+    var(--primary),
+    var(--primary-dark)
+  );
   color: #ffffff;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  box-shadow: 0 12px 24px rgba(79, 70, 229, 0.35);
+}
+
+.register-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .register-footer {
   margin-top: 18px;
   text-align: center;
   font-size: 13px;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .register-footer a {
-  color: #4f46e5;
+  color: var(--primary);
   text-decoration: none;
+  font-weight: 500;
+}
+
+/* =====================================================
+   DASHBOARD – UI
+===================================================== */
+
+.card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.card-muted {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---------- TABLE ---------- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.table th,
+.table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.table th {
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.table tr:hover td {
+  background: #f1f5f9;
+}
+
+/* ---------- BADGES ---------- */
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.badge-primary {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.badge-success {
+  background: #dcfce7;
+  color: var(--success);
+}
+
+/* =====================================================
+   ANIMATION
+===================================================== */
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =====================================================
+   MOBILE
+===================================================== */
+
+@media (max-width: 768px) {
+  .dashboard-main {
+    padding: 20px;
+  }
+
+  .register-card {
+    padding: 32px 24px;
+  }
 }
