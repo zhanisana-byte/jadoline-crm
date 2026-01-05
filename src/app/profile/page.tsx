@@ -41,51 +41,52 @@ export default function ProfilePage() {
   const [email, setEmail] = useState<string>("");
   const [profile, setProfile] = useState<ProfileRow | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setErr(null);
+  async function load() {
+    setLoading(true);
+    setErr(null);
 
-      try {
-        const { data: uRes, error: uErr } = await supabase.auth.getUser();
-        if (uErr) throw uErr;
+    try {
+      const { data: uRes, error: uErr } = await supabase.auth.getUser();
+      if (uErr) throw uErr;
 
-        const user = uRes.user;
-        if (!user) {
-          setErr("Vous devez être connecté(e).");
-          setProfile(null);
-          return;
-        }
-
-        setEmail(user.email ?? "");
-
-        const { data, error } = await supabase
-          .from("users_profile")
-          .select("user_id, full_name, agency_id, role, created_at, avatar_url, account_type")
-          .eq("user_id", user.id)
-          .single();
-
-        if (error) throw error;
-
-        setProfile({
-          user_id: String(data.user_id),
-          full_name: data.full_name ?? null,
-          agency_id: data.agency_id ?? null,
-          role: data.role ?? null,
-          created_at: data.created_at ?? null,
-          avatar_url: data.avatar_url ?? null,
-          account_type: (data.account_type ?? null) as any,
-        });
-      } catch (e: any) {
-        setErr(e?.message ?? "Une erreur est survenue.");
+      const user = uRes.user;
+      if (!user) {
+        setErr("Vous devez être connecté(e).");
         setProfile(null);
-      } finally {
-        setLoading(false);
+        return;
       }
-    };
 
+      setEmail(user.email ?? "");
+
+      const { data, error } = await supabase
+        .from("users_profile")
+        .select("user_id, full_name, agency_id, role, created_at, avatar_url, account_type")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) throw error;
+
+      setProfile({
+        user_id: String(data.user_id),
+        full_name: data.full_name ?? null,
+        agency_id: data.agency_id ?? null,
+        role: data.role ?? null,
+        created_at: data.created_at ?? null,
+        avatar_url: data.avatar_url ?? null,
+        account_type: (data.account_type ?? null) as any,
+      });
+    } catch (e: any) {
+      setErr(e?.message ?? "Une erreur est survenue.");
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
     load();
-  }, [supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) return null;
 
@@ -162,7 +163,7 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {/* Bouton Notifications */}
+          {/* Actions */}
           <div className="flex items-center gap-2">
             <Link
               href="/notifications"
@@ -184,29 +185,22 @@ export default function ProfilePage() {
               created_at: profile.created_at,
             }}
             email={email}
+            onSaved={load} // ✅ refresh sans reload
           />
 
-          {/* Social Manager: Join agency visible */}
+          {/* SOCIAL_MANAGER: rejoindre */}
           {profile.account_type === "SOCIAL_MANAGER" && <JoinAgencyCard />}
 
-          {/* Quick recap (facultatif) */}
           <QuickRecapCard />
         </div>
 
         {/* RIGHT */}
         <div className="space-y-6">
-          {/* Agency: show My Agency */}
+          {/* AGENCY: mon agence */}
           {profile.account_type === "AGENCY" && <MonAgencyCard myAgencyId={myAgencyId} />}
 
-          {/* Work = agences associées / collaborations (tous les comptes) */}
+          {/* collaborations (work) */}
           <WorkspaceCard myAgencyId={myAgencyId} />
-
-          {/* Social Manager: aussi montrer "Mon agence" si vous voulez (optionnel)
-              => si vous ne voulez PAS, supprimez ce bloc
-          */}
-          {profile.account_type === "SOCIAL_MANAGER" && myAgencyId && (
-            <MonAgencyCard myAgencyId={myAgencyId} />
-          )}
         </div>
       </div>
     </div>
