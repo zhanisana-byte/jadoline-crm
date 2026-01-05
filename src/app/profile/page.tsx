@@ -10,6 +10,22 @@ type ProfileRow = {
   agency_id: string | null;
 };
 
+type AgencyRow = {
+  id: string;
+  name: string | null;
+  owner_id: string | null;
+};
+
+function cn(...cls: (string | false | null | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v.trim()
+  );
+}
+
 export default function ProfilePage() {
   const supabase = createClient();
 
@@ -17,20 +33,28 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
-
-  // auth email (depuis auth.users via getUser)
   const [email, setEmail] = useState<string>("");
 
   // users_profile
   const [fullName, setFullName] = useState<string>("");
-  const [role, setRole] = useState<string>("OWNER");
+  const [role, setRole] = useState<string>("CM");
   const [agencyId, setAgencyId] = useState<string | null>(null);
 
-  // join agency
+  // agence principale
+  const [agencyName, setAgencyName] = useState<string>("");
+
+  // rejoindre autre agence (sous-traitance)
   const [joinAgencyInput, setJoinAgencyInput] = useState("");
+
+  // switch to agency
+  const [switchAgencyName, setSwitchAgencyName] = useState("");
 
   const [ok, setOk] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ Type de compte (dérivé du role)
+  const isAgencyAccount = useMemo(() => role === "OWNER" || role === "ADMIN", [role]);
+  const accountTypeLabel = useMemo(() => (isAgencyAccount ? "Agence" : "Social Manager"), [isAgencyAccount]);
 
   const initials = useMemo(() => {
     const n = (fullName || "").trim();
@@ -68,16 +92,14 @@ export default function ProfilePage() {
       .eq("user_id", u.id)
       .single();
 
+    // si profil absent → création minimale
     if (pErr) {
-      // si pas encore créé, on initialise léger
-      // (à condition que RLS autorise l'insert sur users_profile pour soi)
       const fallback: ProfileRow = {
         user_id: u.id,
         full_name: "",
-        role: "OWNER",
+        role: "CM",
         agency_id: null,
       };
-
       const { error: insErr } = await supabase.from("users_profile").insert(fallback);
       if (insErr) {
         setError(`Profil introuvable et création impossible: ${insErr.message}`);
@@ -86,15 +108,34 @@ export default function ProfilePage() {
       }
 
       setFullName("");
-      setRole("OWNER");
+      setRole("CM");
       setAgencyId(null);
+      setAgencyName("");
       setLoading(false);
       return;
     }
 
     setFullName(pRow?.full_name ?? "");
-    setRole((pRow?.role as string) ?? "OWNER");
+    setRole((pRow?.role as string) ?? "CM");
     setAgencyId(pRow?.agency_id ?? null);
+
+    // charger le nom d’agence principale si existante
+    if (pRow?.agency_id) {
+      const { data: a, error: agErr } = await supabase
+        .from("agencies")
+        .select("id, name, owner_id")
+        .eq("id", pRow.agency_id)
+        .single();
+
+      if (!agErr && a) {
+        const ag = a as AgencyRow;
+        setAgencyName(ag.name ?? "");
+      } else {
+        setAgencyName("");
+      }
+    } else {
+      setAgencyName("");
+    }
 
     setLoading(false);
   }
@@ -109,10 +150,6 @@ export default function ProfilePage() {
     }
   }
 
-  function isUuid(v: string) {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-  }
-
   async function onSaveProfile() {
     if (!userId) return;
 
@@ -121,34 +158,26 @@ export default function ProfilePage() {
     setError(null);
 
     try {
-      // 1) update users_profile (nom + rôle)
+      // update users_profile (nom)
       const { error: upErr } = await supabase
         .from("users_profile")
-        .update({
-          full_name: fullName.trim() || null,
-          role: role.trim() || "OWNER",
-        })
+        .update({ full_name: fullName.trim() || null })
         .eq("user_id", userId);
-
       if (upErr) throw upErr;
 
-      // 2) update email (auth)
-      // ⚠️ Meta/Supabase peut exiger confirmation email.
-      // Dans ce cas, l’email ne changera qu’après confirmation.
+      // update email (auth)
       const newEmail = email.trim();
       if (newEmail) {
         const { error: mailErr } = await supabase.auth.updateUser({ email: newEmail });
         if (mailErr) {
-          // on ne bloque pas le reste
-          setError(
-            `Profil enregistré, mais email non mis à jour: ${mailErr.message}`
-          );
+          setError(`Profil enregistré, mais email non mis à jour: ${mailErr.message}`);
           setSaving(false);
           return;
         }
       }
 
       setOk("✅ Profil enregistré.");
+      await load();
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
     } finally {
@@ -156,6 +185,7 @@ export default function ProfilePage() {
     }
   }
 
+  // ✅ Rejoindre une autre agence en sous-traitance (même pour agence)
   async function onJoinAgency() {
     if (!userId) return;
 
@@ -164,47 +194,57 @@ export default function ProfilePage() {
 
     const value = joinAgencyInput.trim();
     if (!value) {
-      setError("Veuillez saisir l’ID d’agence.");
+      setError("Veuillez saisir l’Agency ID.");
       return;
     }
     if (!isUuid(value)) {
-      setError("ID d’agence invalide (format UUID attendu).");
+      setError("Agency ID invalide (format UUID attendu).");
       return;
     }
 
     setSaving(true);
     try {
-      // Vérifier que l’agence existe
-      const { data: ag, error: agErr } = await supabase
-        .from("agencies")
-        .select("id")
-        .eq("id", value)
-        .single();
-
-      if (agErr || !ag?.id) {
-        throw new Error("Agence introuvable. Vérifiez l’ID fourni par l’admin.");
-      }
-
-      // 1) mettre agency_id dans users_profile
-      const { error: pErr } = await supabase
-        .from("users_profile")
-        .update({ agency_id: value })
-        .eq("user_id", userId);
-
-      if (pErr) throw pErr;
-
-      // 2) ajouter membre (si table existe + RLS ok)
-      // Si une policy bloque, ce n’est pas bloquant pour l’UI, mais on tente.
-      await supabase.from("agency_members").insert({
-        agency_id: value,
-        user_id: userId,
-        role: "CM",
-        status: "ACTIVE",
+      // on utilise votre RPC existante (recommandé)
+      const { error: joinErr } = await supabase.rpc("join_with_agency_id", {
+        p_agency_id: value,
       });
 
-      setAgencyId(value);
+      if (joinErr) {
+        throw joinErr;
+      }
+
       setJoinAgencyInput("");
-      setOk("✅ Agence rejointe. Vous pouvez maintenant voir les clients autorisés.");
+      setOk("✅ Agence rejointe en sous-traitance.");
+      // On ne change PAS agency_id principal ici
+      // (votre système multi-agence se gère via agency_members / member_client_access)
+    } catch (e: any) {
+      setError(e?.message ?? "Erreur inconnue.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ✅ Switch Social Manager → Agence (créer son agence principale)
+  async function onSwitchToAgency() {
+    setOk(null);
+    setError(null);
+
+    const n = switchAgencyName.trim();
+    if (!n) {
+      setError("Veuillez saisir le nom de votre agence.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { error: swErr } = await supabase.rpc("switch_to_agency", {
+        p_agency_name: n,
+      });
+      if (swErr) throw swErr;
+
+      setSwitchAgencyName("");
+      setOk("✅ Votre compte est maintenant une Agence.");
+      await load();
     } catch (e: any) {
       setError(e?.message ?? "Erreur inconnue.");
     } finally {
@@ -225,7 +265,9 @@ export default function ProfilePage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="m-0">Profil</h1>
-          <p className="mt-2 muted">Gérez vos informations et rejoignez une agence.</p>
+          <p className="mt-2 muted">
+            Gérez vos informations, votre type de compte et la sous-traitance.
+          </p>
         </div>
 
         <button onClick={load} className="btn btn-ghost">
@@ -236,7 +278,7 @@ export default function ProfilePage() {
       {error ? <Alert type="error" text={error} /> : null}
       {ok ? <Alert type="ok" text={ok} /> : null}
 
-      {/* ===== Top Premium Card ===== */}
+      {/* TOP CARD */}
       <div className="card p-6 mt-6">
         <div className="profileTop">
           <div className="profileLeft">
@@ -245,10 +287,23 @@ export default function ProfilePage() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="profileName truncate">{fullName || "Votre nom"}</div>
-                <span className="badge badge-gold">{role || "OWNER"}</span>
+                <span className="badge badge-gold">{accountTypeLabel}</span>
+
+                {agencyId ? (
+                  <span className="badge badge-success">✅ Agence principale</span>
+                ) : (
+                  <span className="badge badge-info">ℹ️ Sans agence principale</span>
+                )}
               </div>
 
               <div className="profileEmail truncate">{email || "—"}</div>
+
+              {agencyId ? (
+                <div className="mt-2 text-sm text-slate-600">
+                  <span className="font-semibold">Agence principale :</span>{" "}
+                  {agencyName ? agencyName : agencyId}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -257,27 +312,30 @@ export default function ProfilePage() {
               📋 Copier Votre ID
             </button>
 
-            <button type="button" className="btn btn-ghost" onClick={() => {
-              // focus premier champ
-              const el = document.getElementById("full_name_input");
-              el?.scrollIntoView({ behavior: "smooth", block: "center" });
-              (el as HTMLInputElement | null)?.focus?.();
-            }}>
-              ✏️ Modifier
-            </button>
+            {agencyId ? (
+              <button type="button" className="btn btn-ghost" onClick={() => agencyId && copy(agencyId)}>
+                🏢 Copier Agency ID
+              </button>
+            ) : null}
 
-            <button type="button" className="btn btn-primary" onClick={() => {
-              const el = document.getElementById("join_agency_input");
-              el?.scrollIntoView({ behavior: "smooth", block: "center" });
-              (el as HTMLInputElement | null)?.focus?.();
-            }}>
-              🏢 Rejoindre une agence
-            </button>
+            {!isAgencyAccount ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const el = document.getElementById("switch_agency_name");
+                  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  (el as HTMLInputElement | null)?.focus?.();
+                }}
+              >
+                🚀 Passer en Agence
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
 
-      {/* ===== Bottom grid ===== */}
+      {/* GRID */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1.15fr_.85fr] gap-6">
         {/* Informations */}
         <div className="card p-6">
@@ -287,7 +345,6 @@ export default function ProfilePage() {
           <div className="mt-5">
             <label>Nom</label>
             <input
-              id="full_name_input"
               className="input"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
@@ -309,12 +366,8 @@ export default function ProfilePage() {
           </div>
 
           <div className="mt-4">
-            <label>Rôle</label>
-            <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="OWNER">OWNER</option>
-              <option value="ADMIN">ADMIN</option>
-              <option value="CM">CM</option>
-            </select>
+            <label>Type de compte</label>
+            <input className="input" value={accountTypeLabel} readOnly />
           </div>
 
           <div className="mt-5">
@@ -334,17 +387,73 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Rejoindre agence */}
+        {/* Droite: Switch + Sous-traitance + (si agence: info agence) */}
         <div className="card p-6">
-          <div className="card-title">Rejoindre une agence</div>
+          {/* Switch en agence (uniquement Social Manager) */}
+          {!isAgencyAccount ? (
+            <>
+              <div className="card-title">Créer votre agence</div>
+              <div className="muted mt-1">
+                Transformez votre compte actuel en agence (sans changer votre ID).
+              </div>
+
+              <div className="mt-5">
+                <label>Nom de votre agence</label>
+                <input
+                  id="switch_agency_name"
+                  className="input"
+                  value={switchAgencyName}
+                  onChange={(e) => setSwitchAgencyName(e.target.value)}
+                  placeholder="Ex : Sana Com"
+                />
+              </div>
+
+              <button className="btn btn-primary mt-4 w-full" disabled={saving} onClick={onSwitchToAgency}>
+                {saving ? "Traitement..." : "Créer mon agence"}
+              </button>
+
+              <div className="tip-box mt-4">
+                <div style={{ fontWeight: 700 }}>Info</div>
+                <div className="muted mt-1">
+                  Après création, vous pourrez ajouter des clients et inviter des Social Managers.
+                </div>
+              </div>
+
+              <hr className="my-5 border-slate-200/70" />
+            </>
+          ) : (
+            <>
+              <div className="card-title">Votre agence principale</div>
+              <div className="muted mt-1">Partagez ces infos à votre équipe.</div>
+
+              <div className="mt-5">
+                <label>Nom de l’agence</label>
+                <input className="input" value={agencyName || "—"} readOnly />
+              </div>
+
+              <div className="mt-4">
+                <label>Agency ID</label>
+                <div className="idRow">
+                  <input className="input" value={agencyId ?? ""} readOnly />
+                  <button className="btn btn-ghost" onClick={() => agencyId && copy(agencyId)}>
+                    Copier
+                  </button>
+                </div>
+              </div>
+
+              <hr className="my-5 border-slate-200/70" />
+            </>
+          )}
+
+          {/* ✅ Sous-traitance (pour TOUS) */}
+          <div className="card-title">Sous-traitance : rejoindre une autre agence</div>
           <div className="muted mt-1">
-            Utilisez l’ID fourni par l’admin de l’agence.
+            Même une agence peut rejoindre une autre agence via Agency ID.
           </div>
 
           <div className="mt-5">
-            <label>ID d’agence</label>
+            <label>Agency ID</label>
             <input
-              id="join_agency_input"
               className="input"
               value={joinAgencyInput}
               onChange={(e) => setJoinAgencyInput(e.target.value)}
@@ -352,20 +461,14 @@ export default function ProfilePage() {
             />
           </div>
 
-          <button className="btn btn-primary mt-4 w-full" disabled={saving} onClick={onJoinAgency}>
-            {saving ? "Traitement..." : "Rejoindre"}
+          <button className="btn btn-ghost mt-4 w-full" disabled={saving} onClick={onJoinAgency}>
+            {saving ? "Traitement..." : "Rejoindre en sous-traitance"}
           </button>
 
           <div className="tip-box mt-4">
-            <div style={{ fontWeight: 700 }}>Info</div>
+            <div style={{ fontWeight: 700 }}>Conseil</div>
             <div className="muted mt-1">
-              Une fois dans l’agence, vous verrez uniquement les clients autorisés (selon permissions).
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="muted">
-              Agence actuelle : <b>{agencyId ?? "Aucune"}</b>
+              Cette action ajoute un membership (agency_members) et ne change pas votre agence principale.
             </div>
           </div>
         </div>
