@@ -33,7 +33,7 @@ export default function RegisterClient() {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    // validations
+    // VALIDATION
     if (!fullName.trim()) return setErrorMsg("Veuillez saisir votre nom complet.");
     if (!email.trim()) return setErrorMsg("Veuillez saisir votre email.");
     if (!password.trim()) return setErrorMsg("Veuillez saisir votre mot de passe.");
@@ -58,16 +58,21 @@ export default function RegisterClient() {
       if (authError || !authData.user) throw authError || new Error("Signup failed");
       const userId = authData.user.id;
 
-      // 2) PROFILE
-      const { error: profileError } = await supabase.from("users_profile").insert({
-        user_id: userId,
-        full_name: fullName.trim(),
-        account_type: type,
-      });
+      // 2) PROFILE (UPSERT => pas de duplicate key)
+      const { error: profileError } = await supabase
+        .from("users_profile")
+        .upsert(
+          {
+            user_id: userId,
+            full_name: fullName.trim(),
+            account_type: type, // ✅ doit exister en DB (solution 1)
+          },
+          { onConflict: "user_id" }
+        );
 
       if (profileError) throw profileError;
 
-      // 3) AGENCY
+      // 3) AGENCY FLOW
       if (type === "AGENCY") {
         const { data: agency, error: agencyError } = await supabase
           .from("agencies")
@@ -88,33 +93,60 @@ export default function RegisterClient() {
 
         if (memberError) throw memberError;
 
-        // optional update profile with agency info
         const { error: updError } = await supabase
           .from("users_profile")
-          .update({
-            agency_id: agency.id,
-            agency_name: agency.name,
-          })
-          .eq("user_id", userId);
+          .upsert(
+            {
+              user_id: userId,
+              agency_id: agency.id,
+              agency_name: agency.name,
+            },
+            { onConflict: "user_id" }
+          );
 
         if (updError) throw updError;
       }
 
-      // 4) SOCIAL MANAGER (optional join)
+      // 4) SOCIAL MANAGER JOIN (optionnel)
       if (type === "SOCIAL_MANAGER" && agencyId.trim()) {
         const { error: joinError } = await supabase.from("agency_members").insert({
           agency_id: agencyId.trim(),
           user_id: userId,
           role: "SOCIAL_MANAGER",
         });
+
         if (joinError) throw joinError;
       }
 
       setSuccessMsg("Compte créé. Redirection...");
       router.replace("/dashboard");
+      return;
     } catch (err: any) {
       console.error("REGISTER ERROR ❌", err);
-      setErrorMsg(err?.message || "Erreur lors de la création du compte.");
+
+      const msg = String(err?.message || "");
+
+      // Email déjà utilisé / user existe
+      if (
+        msg.toLowerCase().includes("already registered") ||
+        msg.toLowerCase().includes("user already exists") ||
+        msg.toLowerCase().includes("already been registered")
+      ) {
+        setErrorMsg("Cet email a déjà un compte. Veuillez vous connecter.");
+        router.replace("/login");
+        return;
+      }
+
+      // Profil déjà existant (tests anciens) => on va au dashboard
+      if (
+        msg.toLowerCase().includes("duplicate key") ||
+        msg.toLowerCase().includes("users_profile_pkey")
+      ) {
+        router.replace("/dashboard");
+        return;
+      }
+
+      setErrorMsg(msg || "Erreur lors de la création du compte.");
     } finally {
       setLoading(false);
     }
