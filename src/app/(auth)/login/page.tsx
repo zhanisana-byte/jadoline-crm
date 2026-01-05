@@ -31,6 +31,9 @@ function LoginInner() {
     return "https://www.jadoline.com";
   }, []);
 
+  /* ===============================
+     Messages depuis URL
+  =============================== */
   useEffect(() => {
     if (params.get("confirmed") === "1") {
       setMsgType("success");
@@ -39,7 +42,7 @@ function LoginInner() {
 
     if (params.get("reset") === "1") {
       setMsgType("success");
-      setMsg("Votre mot de passe a été modifié ✅ Vous pouvez vous connecter.");
+      setMsg("Mot de passe modifié avec succès ✅");
     }
 
     if (params.get("error")) {
@@ -48,6 +51,9 @@ function LoginInner() {
     }
   }, [params]);
 
+  /* ===============================
+     LOGIN (CORRIGÉ)
+  =============================== */
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -58,17 +64,26 @@ function LoginInner() {
       password,
     });
 
-    setLoading(false);
-
     if (error) {
+      setLoading(false);
       setMsgType("error");
       setMsg("Email ou mot de passe incorrect.");
       return;
     }
 
-    router.push("/dashboard");
+    // ✅ CRUCIAL : forcer la session à être lue
+    await supabase.auth.getSession();
+
+    // ✅ CRUCIAL : forcer Next.js à relire les cookies (middleware)
+    router.refresh();
+
+    // ✅ replace évite retour vers /login
+    router.replace("/dashboard");
   }
 
+  /* ===============================
+     MOT DE PASSE OUBLIÉ
+  =============================== */
   async function onForgot(e: React.FormEvent) {
     e.preventDefault();
     setForgotLoading(true);
@@ -77,12 +92,11 @@ function LoginInner() {
     const cleanEmail = email.trim();
     if (!cleanEmail) {
       setMsgType("error");
-      setMsg("Veuillez saisir votre email pour recevoir le lien.");
+      setMsg("Veuillez saisir votre email.");
       setForgotLoading(false);
       return;
     }
 
-    // ⚠️ Redirection vers la page /reset-password (voir code plus bas)
     const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
       redirectTo: `${siteUrl}/reset-password`,
     });
@@ -91,12 +105,12 @@ function LoginInner() {
 
     if (error) {
       setMsgType("error");
-      setMsg("Impossible d’envoyer l’email. Vérifiez l’adresse et réessayez.");
+      setMsg("Impossible d’envoyer l’email.");
       return;
     }
 
     setMsgType("success");
-    setMsg("Email envoyé ✅ Vérifiez votre boîte mail pour réinitialiser votre mot de passe.");
+    setMsg("Email envoyé ✅ Vérifiez votre boîte mail.");
     setShowForgot(false);
   }
 
@@ -155,11 +169,13 @@ function LoginInner() {
           <button
             className={cn(
               "w-full rounded-xl px-4 py-2 text-sm font-semibold transition",
-              loading ? "bg-slate-200 text-slate-500" : "bg-slate-900 text-white hover:bg-slate-800"
+              loading
+                ? "bg-slate-200 text-slate-500"
+                : "bg-slate-900 text-white hover:bg-slate-800"
             )}
             disabled={loading}
           >
-            {loading ? "..." : "Se connecter"}
+            {loading ? "Connexion..." : "Se connecter"}
           </button>
         </form>
 
@@ -186,7 +202,7 @@ function LoginInner() {
               Réinitialisation du mot de passe
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Nous vous enverrons un lien sécurisé par email.
+              Un lien sécurisé sera envoyé par email.
             </p>
 
             <div className="mt-3">
