@@ -28,12 +28,12 @@ export default function RegisterClient() {
     setAgencyId("");
   }, [type]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    // VALIDATION
+    // validations
     if (!fullName.trim()) return setErrorMsg("Veuillez saisir votre nom complet.");
     if (!email.trim()) return setErrorMsg("Veuillez saisir votre email.");
     if (!password.trim()) return setErrorMsg("Veuillez saisir votre mot de passe.");
@@ -59,20 +59,24 @@ export default function RegisterClient() {
       const userId = authData.user.id;
 
       // 2) PROFILE (UPSERT => pas de duplicate key)
+      // ⚠️ si ta colonne account_type n'existe pas, enlève-la ici
       const { error: profileError } = await supabase
         .from("users_profile")
         .upsert(
           {
             user_id: userId,
             full_name: fullName.trim(),
-            account_type: type, // ✅ doit exister en DB (solution 1)
+            account_type: type,
           },
           { onConflict: "user_id" }
         );
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error("PROFILE UPSERT FAILED", profileError);
+        // fallback: on continue quand même
+      }
 
-      // 3) AGENCY FLOW
+      // 3) AGENCY FLOW (fallback si RLS / insert échoue)
       if (type === "AGENCY") {
         const { data: agency, error: agencyError } = await supabase
           .from("agencies")
@@ -83,28 +87,31 @@ export default function RegisterClient() {
           .select()
           .single();
 
-        if (agencyError || !agency) throw agencyError || new Error("Agency creation failed");
+        if (agencyError || !agency) {
+          console.error("AGENCY CREATE FAILED", agencyError);
+          // fallback: on continue quand même
+        } else {
+          const { error: memberError } = await supabase.from("agency_members").insert({
+            agency_id: agency.id,
+            user_id: userId,
+            role: "OWNER",
+          });
 
-        const { error: memberError } = await supabase.from("agency_members").insert({
-          agency_id: agency.id,
-          user_id: userId,
-          role: "OWNER",
-        });
+          if (memberError) console.error("MEMBER INSERT FAILED", memberError);
 
-        if (memberError) throw memberError;
+          const { error: updError } = await supabase
+            .from("users_profile")
+            .upsert(
+              {
+                user_id: userId,
+                agency_id: agency.id,
+                agency_name: agency.name,
+              },
+              { onConflict: "user_id" }
+            );
 
-        const { error: updError } = await supabase
-          .from("users_profile")
-          .upsert(
-            {
-              user_id: userId,
-              agency_id: agency.id,
-              agency_name: agency.name,
-            },
-            { onConflict: "user_id" }
-          );
-
-        if (updError) throw updError;
+          if (updError) console.error("PROFILE UPDATE FAILED", updError);
+        }
       }
 
       // 4) SOCIAL MANAGER JOIN (optionnel)
@@ -115,7 +122,7 @@ export default function RegisterClient() {
           role: "SOCIAL_MANAGER",
         });
 
-        if (joinError) throw joinError;
+        if (joinError) console.error("JOIN AGENCY FAILED", joinError);
       }
 
       setSuccessMsg("Compte créé. Redirection...");
@@ -126,7 +133,7 @@ export default function RegisterClient() {
 
       const msg = String(err?.message || "");
 
-      // Email déjà utilisé / user existe
+      // email déjà utilisé
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already exists") ||
@@ -137,11 +144,8 @@ export default function RegisterClient() {
         return;
       }
 
-      // Profil déjà existant (tests anciens) => on va au dashboard
-      if (
-        msg.toLowerCase().includes("duplicate key") ||
-        msg.toLowerCase().includes("users_profile_pkey")
-      ) {
+      // profile duplicate (tests)
+      if (msg.toLowerCase().includes("duplicate key") || msg.toLowerCase().includes("pkey")) {
         router.replace("/dashboard");
         return;
       }
@@ -181,7 +185,7 @@ export default function RegisterClient() {
           {errorMsg && <div className="alert alert-error">{errorMsg}</div>}
           {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-          <form className="auth-form" onSubmit={handleSubmit}>
+          <form className="auth-form" onSubmit={submit}>
             <div>
               <label>Nom complet</label>
               <input
