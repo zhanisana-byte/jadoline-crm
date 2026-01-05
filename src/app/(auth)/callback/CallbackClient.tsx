@@ -1,28 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function CallbackClient() {
   const supabase = createClient();
   const router = useRouter();
-  const params = useSearchParams();
+  const searchParams = useSearchParams();
   const ran = useRef(false);
-  const [status, setStatus] = useState("Finalisation du compte...");
 
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
 
     (async () => {
-      const code = params.get("code");
+      const code = searchParams.get("code");
       if (!code) {
         router.replace("/login");
         return;
       }
 
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      const { data, error } =
+        await supabase.auth.exchangeCodeForSession(code);
+
       if (error || !data.session?.user) {
         router.replace("/login");
         return;
@@ -31,18 +32,14 @@ export default function CallbackClient() {
       const user = data.session.user;
       const meta = user.user_metadata;
 
-      // 1️⃣ CREATE PROFILE
-      const { data: profile } = await supabase
-        .from("users_profile")
-        .insert({
-          user_id: user.id,
-          full_name: meta.full_name,
-          account_type: meta.account_type,
-        })
-        .select()
-        .single();
+      // CREATE PROFILE
+      await supabase.from("users_profile").insert({
+        user_id: user.id,
+        full_name: meta.full_name,
+        account_type: meta.account_type,
+      });
 
-      // 2️⃣ AGENCY FLOW
+      // AGENCY
       if (meta.account_type === "AGENCY") {
         const { data: agency } = await supabase
           .from("agencies")
@@ -53,13 +50,11 @@ export default function CallbackClient() {
           .select()
           .single();
 
-        await supabase
-          .from("agency_members")
-          .insert({
-            agency_id: agency.id,
-            user_id: user.id,
-            role: "OWNER",
-          });
+        await supabase.from("agency_members").insert({
+          agency_id: agency.id,
+          user_id: user.id,
+          role: "OWNER",
+        });
 
         await supabase
           .from("users_profile")
@@ -70,25 +65,21 @@ export default function CallbackClient() {
           .eq("user_id", user.id);
       }
 
-      // 3️⃣ SOCIAL MANAGER JOIN
+      // SOCIAL MANAGER
       if (meta.account_type === "SOCIAL_MANAGER" && meta.join_agency_id) {
-        await supabase
-          .from("agency_members")
-          .insert({
-            agency_id: meta.join_agency_id,
-            user_id: user.id,
-            role: "SOCIAL_MANAGER",
-          });
+        await supabase.from("agency_members").insert({
+          agency_id: meta.join_agency_id,
+          user_id: user.id,
+          role: "SOCIAL_MANAGER",
+        });
       }
 
-      // 4️⃣ CLEAN METADATA
-      await supabase.auth.updateUser({
-        data: {},
-      });
+      // CLEAN METADATA
+      await supabase.auth.updateUser({ data: {} });
 
       router.replace("/dashboard");
     })();
   }, []);
 
-  return <p className="p-8">{status}</p>;
+  return <p className="p-8">Finalisation du compte…</p>;
 }
