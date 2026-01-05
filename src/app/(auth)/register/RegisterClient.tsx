@@ -19,7 +19,7 @@ export default function RegisterClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // reset agency id when switch
+  // reset Agency ID when switching type
   useEffect(() => {
     setAgencyId("");
   }, [type]);
@@ -30,7 +30,7 @@ export default function RegisterClient() {
 
     setLoading(true);
 
-    // 1️⃣ SIGN UP (EMAIL CONFIRMATION OFF)
+    // SIGN UP (email confirmation OFF)
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -49,14 +49,14 @@ export default function RegisterClient() {
 
     const userId = data.user.id;
 
-    // 2️⃣ CREATE PROFILE
+    // CREATE PROFILE
     await supabase.from("users_profile").insert({
       user_id: userId,
       full_name: fullName,
       account_type: type,
     });
 
-    // 3️⃣ AGENCY FLOW
+    // AGENCY
     if (type === "AGENCY") {
       const { data: agency } = await supabase
         .from("agencies")
@@ -82,7 +82,7 @@ export default function RegisterClient() {
         .eq("user_id", userId);
     }
 
-    // 4️⃣ SOCIAL MANAGER FLOW
+    // SOCIAL MANAGER
     if (type === "SOCIAL_MANAGER" && agencyId) {
       await supabase.from("agency_members").insert({
         agency_id: agencyId,
@@ -92,17 +92,17 @@ export default function RegisterClient() {
     }
 
     setLoading(false);
-
-    // 5️⃣ REDIRECT DIRECT CRM
-    router.replace("/dashboard");
+    router.replace("/dashboard"); // ✅ DIRECT CRM
   };
 
   return (
     <div className="register-bg">
       <div className="register-card">
+
         <h1 className="register-title">Créer un compte Jadoline</h1>
         <p className="register-subtitle">CRM professionnel multi-agence</p>
 
+        {/* SWITCH */}
         <div className="account-switch">
           <button
             type="button"
@@ -120,6 +120,7 @@ export default function RegisterClient() {
           </button>
         </div>
 
+        {/* FORM */}
         <form
           className="register-form"
           autoComplete="off"
