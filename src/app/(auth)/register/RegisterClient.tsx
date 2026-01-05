@@ -15,7 +15,6 @@ export default function RegisterClient() {
 
   const [fullName, setFullName] = useState("");
   const [agencyName, setAgencyName] = useState("");
-  const [agencyId, setAgencyId] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -25,7 +24,6 @@ export default function RegisterClient() {
   useEffect(() => {
     setErrorMsg(null);
     setSuccessMsg(null);
-    setAgencyId("");
   }, [type]);
 
   const submit = async (e: React.FormEvent) => {
@@ -59,7 +57,6 @@ export default function RegisterClient() {
       const userId = authData.user.id;
 
       // 2) PROFILE (UPSERT => pas de duplicate key)
-      // ⚠️ si ta colonne account_type n'existe pas, enlève-la ici
       const { error: profileError } = await supabase
         .from("users_profile")
         .upsert(
@@ -67,16 +64,14 @@ export default function RegisterClient() {
             user_id: userId,
             full_name: fullName.trim(),
             account_type: type,
+            // ✅ ici on ne met PAS agency_id, car le join se fera depuis Profil
           },
           { onConflict: "user_id" }
         );
 
-      if (profileError) {
-        console.error("PROFILE UPSERT FAILED", profileError);
-        // fallback: on continue quand même
-      }
+      if (profileError) console.error("PROFILE UPSERT FAILED", profileError);
 
-      // 3) AGENCY FLOW (fallback si RLS / insert échoue)
+      // 3) AGENCY FLOW (seulement si type = AGENCY)
       if (type === "AGENCY") {
         const { data: agency, error: agencyError } = await supabase
           .from("agencies")
@@ -89,14 +84,12 @@ export default function RegisterClient() {
 
         if (agencyError || !agency) {
           console.error("AGENCY CREATE FAILED", agencyError);
-          // fallback: on continue quand même
         } else {
           const { error: memberError } = await supabase.from("agency_members").insert({
             agency_id: agency.id,
             user_id: userId,
             role: "OWNER",
           });
-
           if (memberError) console.error("MEMBER INSERT FAILED", memberError);
 
           const { error: updError } = await supabase
@@ -114,16 +107,8 @@ export default function RegisterClient() {
         }
       }
 
-      // 4) SOCIAL MANAGER JOIN (optionnel)
-      if (type === "SOCIAL_MANAGER" && agencyId.trim()) {
-        const { error: joinError } = await supabase.from("agency_members").insert({
-          agency_id: agencyId.trim(),
-          user_id: userId,
-          role: "SOCIAL_MANAGER",
-        });
-
-        if (joinError) console.error("JOIN AGENCY FAILED", joinError);
-      }
+      // ✅ 4) SOCIAL_MANAGER: on NE rejoint PAS l’agence ici
+      // Le join par ID sera fait dans la page Profil (plus tard)
 
       setSuccessMsg("Compte créé. Redirection...");
       router.replace("/dashboard");
@@ -205,19 +190,6 @@ export default function RegisterClient() {
                   placeholder="Ex: Sana Com"
                   value={agencyName}
                   onChange={(e) => setAgencyName(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-            )}
-
-            {type === "SOCIAL_MANAGER" && (
-              <div>
-                <label>Agency ID (optionnel)</label>
-                <input
-                  className="input"
-                  placeholder="UUID de l’agence"
-                  value={agencyId}
-                  onChange={(e) => setAgencyId(e.target.value)}
                   disabled={loading}
                 />
               </div>
