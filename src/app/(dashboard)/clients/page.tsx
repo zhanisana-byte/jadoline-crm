@@ -1,483 +1,249 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import SocialAccountsInline, { SocialDraft } from "@/components/SocialAccountsInline";
 
-import { PhoneInput } from "react-international-phone";
-import "react-international-phone/style.css";
+type Agency = { id: string; name: string };
 
-type ClientRow = {
-  id: string;
-  name: string;
-  phone: string | null;
-  phones: string[] | null;
-  logo_url: string | null;
-  created_at: string | null;
-};
-
-type MetaConnRow = {
-  id: string;
-  client_id: string;
-  fb_page_id: string | null;
-  ig_account_id: string | null;
-  created_at: string | null;
-};
-
-export default function ClientsPage() {
-  return (
-    <Suspense fallback={<div className="container py-10"><div className="card p-6">Chargement…</div></div>}>
-      <ClientsInner />
-    </Suspense>
-  );
-}
-
-function ClientsInner() {
+export default function CreateClientPage() {
   const supabase = createClient();
-  const searchParams = useSearchParams();
+  const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [agencies, setAgencies] = useState<Agency[]>([]);
+  const [agencyId, setAgencyId] = useState<string>("");
 
-  const [agencyId, setAgencyId] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [metaConnections, setMetaConnections] = useState<MetaConnRow[]>([]);
-
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-
-  // ---- Form ----
   const [name, setName] = useState("");
-  const [phones, setPhones] = useState<string[]>([""]);
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [phonesText, setPhonesText] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [briefAvoid, setBriefAvoid] = useState("");
 
-  const connectedClientIds = useMemo(() => {
-    return new Set(metaConnections.map((m) => m.client_id));
-  }, [metaConnections]);
+  const [socials, setSocials] = useState<SocialDraft[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const metaConnected = searchParams.get("meta") === "connected";
-  const metaError = searchParams.get("meta") === "error";
-
+  // Load agencies user is member of + current_agency_id
   useEffect(() => {
-    if (metaConnected) setOk("✅ Meta connecté. Tu peux maintenant choisir Page/IG pour ce client.");
-    if (metaError) setError("❌ Meta: connexion échouée. Vérifie permissions/scopes et réessaie.");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!logoFile) {
-      setLogoPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(logoFile);
-    setLogoPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [logoFile]);
-
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadAll() {
-    setLoading(true);
-    setError(null);
-
-    const { data: authData, error: aErr } = await supabase.auth.getUser();
-    if (aErr || !authData?.user) {
-      setError("Non authentifié. Reconnecte-toi.");
-      setLoading(false);
-      return;
-    }
-
-    const uid = authData.user.id;
-    setUserId(uid);
-
-    const { data: profile, error: pErr } = await supabase
-      .from("users_profile")
-      .select("agency_id, role")
-      .eq("user_id", uid)
-      .single();
-
-    if (pErr || !profile?.agency_id) {
-      setError("Profil incomplet: agency_id manquant.");
-      setLoading(false);
-      return;
-    }
-
-    const agid = profile.agency_id as string;
-    setAgencyId(agid);
-
-    const { data: cRows, error: cErr } = await supabase
-      .from("clients")
-      .select("id, name, phone, phones, logo_url, created_at")
-      .eq("agency_id", agid)
-      .order("created_at", { ascending: false });
-
-    if (cErr) {
-      setError(cErr.message);
-      setClients([]);
-      setMetaConnections([]);
-      setLoading(false);
-      return;
-    }
-
-    setClients((cRows ?? []) as ClientRow[]);
-
-    // meta connections (status)
-    const { data: mRows, error: mErr } = await supabase
-      .from("meta_connections")
-      .select("id, client_id, fb_page_id, ig_account_id, created_at")
-      .eq("agency_id", agid)
-      .order("created_at", { ascending: false });
-
-    if (mErr) {
-      // On ne bloque pas la page si meta_connections est vide ou pas encore prête
-      setMetaConnections([]);
-    } else {
-      setMetaConnections((mRows ?? []) as MetaConnRow[]);
-    }
-
-    setLoading(false);
-  }
-
-  function resetForm() {
-    setName("");
-    setPhones([""]);
-    setLogoFile(null);
-    setOk(null);
-    setError(null);
-  }
-
-  function isValidE164(p: string) {
-    if (!p) return false;
-    if (!p.startsWith("+")) return false;
-    const digits = p.replace(/[^\d]/g, "");
-    return digits.length >= 8 && digits.length <= 15;
-  }
-
-  function addPhone() {
-    setPhones((prev) => [...prev, ""]);
-  }
-
-  function updatePhone(i: number, val: string) {
-    setPhones((prev) => prev.map((p, idx) => (idx === i ? val : p)));
-  }
-
-  function removePhone(i: number) {
-    setPhones((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  async function uploadClientLogo(params: { agencyId: string; clientId: string; file: File }) {
-    const { agencyId, clientId, file } = params;
-
-    if (!file.type.startsWith("image/")) throw new Error("Le logo doit être une image (png/jpg/webp).");
-
-    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-    const path = `agencies/${agencyId}/clients/${clientId}/logo.${ext}`;
-
-    const { error: upErr } = await supabase.storage
-      .from("client-logos")
-      .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
-
-    if (upErr) throw upErr;
-
-    const { data } = supabase.storage.from("client-logos").getPublicUrl(path);
-    const publicUrl = data?.publicUrl;
-    if (!publicUrl) throw new Error("Impossible de récupérer l’URL publique du logo.");
-
-    const { error: dbErr } = await supabase.from("clients").update({ logo_url: publicUrl }).eq("id", clientId);
-    if (dbErr) throw dbErr;
-
-    return publicUrl;
-  }
-
-  async function onCreateClient() {
-    setOk(null);
-    setError(null);
-
-    if (!agencyId || !userId) {
-      setError("Contexte manquant (agency/user). Reconnecte-toi.");
-      return;
-    }
-
-    const cleanName = name.trim();
-    if (!cleanName) {
-      setError("Le nom du client est obligatoire.");
-      return;
-    }
-
-    const cleanPhones = phones.map((p) => p.trim()).filter(Boolean);
-    if (cleanPhones.length === 0) {
-      setError("Au moins 1 téléphone est obligatoire.");
-      return;
-    }
-
-    const bad = cleanPhones.find((p) => !isValidE164(p));
-    if (bad) {
-      setError(`Téléphone invalide: ${bad} (ex: +21620121521)`);
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const { data: client, error: cErr } = await supabase
-        .from("clients")
-        .insert({
-          agency_id: agencyId,
-          name: cleanName,
-          phone: cleanPhones[0],
-          phones: cleanPhones,
-          created_by: userId,
-        })
-        .select("id")
-        .single();
-
-      if (cErr) throw cErr;
-      if (!client?.id) throw new Error("Client non créé (id manquant).");
-
-      const clientId = client.id as string;
-
-      if (logoFile) {
-        await uploadClientLogo({ agencyId, clientId, file: logoFile });
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user) {
+        router.push("/login");
+        return;
       }
 
-      setOk("✅ Client créé. Maintenant tu peux connecter Meta (FB/IG) depuis la liste.");
-      await loadAll();
-      resetForm();
+      const { data: profile } = await supabase
+        .from("users_profile")
+        .select("current_agency_id")
+        .eq("user_id", auth.user.id)
+        .single();
+
+      const { data: myAgencies } = await supabase
+        .from("agency_members")
+        .select("agency_id, agencies:agencies(id, name)")
+        .eq("user_id", auth.user.id);
+
+      const list: Agency[] =
+        myAgencies
+          ?.map((r: any) => r.agencies)
+          ?.filter(Boolean)
+          ?.map((a: any) => ({ id: a.id, name: a.name })) ?? [];
+
+      setAgencies(list);
+
+      // default agency selection
+      const def = profile?.current_agency_id || list?.[0]?.id || "";
+      setAgencyId(def);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const phonesArr = useMemo(() => {
+    return phonesText
+      .split(/[,;\n]/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [phonesText]);
+
+  async function onSubmit() {
+    setError(null);
+
+    if (!agencyId) return setError("Choisis une agence propriétaire.");
+    if (!name.trim()) return setError("Le nom du client est obligatoire.");
+
+    setLoading(true);
+    try {
+      const res = await fetch("/clients/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agency_id: agencyId,
+          name: name.trim(),
+          email: email.trim() || null,
+          phones: phonesArr,
+          logo_url: logoUrl.trim() || null,
+          brief_avoid: briefAvoid.trim() || null,
+          socials,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json?.error || "Erreur inconnue");
+        setLoading(false);
+        return;
+      }
+
+      // ✅ redirect to clients list (ou vers page client directement)
+      router.push(`/clients/${json.client_id}`);
     } catch (e: any) {
-      setError(e?.message ?? "Erreur inconnue.");
+      setError(e?.message || "Erreur réseau");
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   }
 
-  function metaConnectUrl(clientId: string) {
-    // On envoie client_id pour que le callback sache à quel client associer la connexion
-    return `/api/meta/login?client_id=${encodeURIComponent(clientId)}`;
-  }
-
   return (
-    <div className="container py-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="m-0">Clients</h1>
-          <p className="mt-2 muted">
-            Création client: Nom + Téléphones (multi) + Logo (optionnel). Ensuite connexion Meta (FB/IG) par client.
+    <div className="p-6 md:p-10">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold">Créer un client</h1>
+          <p className="text-sm text-slate-500">
+            Ajoute un client et ses réseaux sociaux (manuel MVP).
           </p>
         </div>
 
-        <button onClick={loadAll} disabled={loading} className="btn btn-ghost">
-          ↻ Refresh
-        </button>
-      </div>
-
-      {error ? <Alert type="error" text={error} /> : null}
-      {ok ? <Alert type="ok" text={ok} /> : null}
-
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1.25fr_.9fr] gap-6">
-        {/* LEFT: Create */}
-        <div className="card p-6">
-          <div className="flex items-start justify-between gap-3">
+        {/* Card */}
+        <div className="rounded-3xl border bg-white/90 backdrop-blur shadow-sm p-5 md:p-7">
+          {/* Top row: Agency */}
+          <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <div className="card-title">Créer un client</div>
-              <div className="muted mt-1">MVP: rapide, propre, prêt pour Meta.</div>
+              <label className="text-sm font-medium text-slate-700">
+                Agence propriétaire
+              </label>
+              <select
+                value={agencyId}
+                onChange={(e) => setAgencyId(e.target.value)}
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+              >
+                <option value="">— Choisir —</option>
+                {agencies.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-xs text-slate-500">
+                Tu peux créer pour ton agence ou une agence partenaire (si tu es membre).
+              </div>
             </div>
-            <span className="badge badge-info">MVP</span>
-          </div>
 
-          <div className="mt-5">
-            <label>Nom client *</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: BBGym" />
-          </div>
-
-          <div className="mt-4">
-            <div className="flex items-center justify-between gap-3">
-              <label>Téléphones (multi) *</label>
-              <button type="button" onClick={addPhone} className="btn btn-ghost">
-                + Ajouter numéro
-              </button>
-            </div>
-
-            <div className="mt-2 grid gap-2">
-              {phones.map((p, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_48px] gap-2 items-center">
-                  <PhoneInput
-                    defaultCountry="tn"
-                    value={p}
-                    onChange={(val) => updatePhone(idx, val)}
-                    inputStyle={{
-                      width: "100%",
-                      borderRadius: 14,
-                      border: "1px solid rgba(226,232,240,.9)",
-                      padding: "10px 12px",
-                    }}
-                    countrySelectorStyleProps={{
-                      buttonStyle: { borderRadius: 14, border: "1px solid rgba(226,232,240,.9)" },
-                    }}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => removePhone(idx)}
-                    disabled={phones.length === 1}
-                    title="Supprimer"
-                    className="btn"
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 14,
-                      border: "1px solid #fee2e2",
-                      background: phones.length === 1 ? "#f8fafc" : "#fff1f2",
-                      color: "#b91c1c",
-                      cursor: phones.length === 1 ? "not-allowed" : "pointer",
-                      padding: 0,
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label>Logo (optionnel)</label>
-
-            <div className="mt-2 flex items-center gap-4">
-              <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
-
-              {logoPreview ? (
-                <img
-                  src={logoPreview}
-                  alt="Preview logo"
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 16,
-                    objectFit: "cover",
-                    border: "1px solid rgba(226,232,240,.9)",
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 16,
-                    border: "1px dashed #cbd5e1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#94a3b8",
-                  }}
-                >
-                  Logo
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-5 flex gap-2">
-            <button onClick={onCreateClient} disabled={saving || loading} className="btn btn-primary">
-              {saving ? "Création..." : "Créer le client"}
-            </button>
-            <button onClick={resetForm} disabled={saving} className="btn btn-ghost">
-              Reset
-            </button>
-          </div>
-
-          <div className="tip-box mt-5">
-            Après création → utilise <b>“Connecter Meta”</b> sur le client.  
-            On associe la connexion au <b>client_id</b> (pas besoin RS manuel).
-          </div>
-        </div>
-
-        {/* RIGHT: List */}
-        <div className="card p-6">
-          <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="card-title">Liste clients</div>
-              <div className="muted mt-1">{clients.length} client(s)</div>
+              <label className="text-sm font-medium text-slate-700">
+                Logo URL (optionnel)
+              </label>
+              <input
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                placeholder="https://..."
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
+              />
             </div>
-            <span className="badge badge-success">Agency OK</span>
           </div>
 
-          <div className="mt-4 grid gap-3">
-            {clients.map((c) => {
-              const connected = connectedClientIds.has(c.id);
+          {/* Client info */}
+          <div className="mt-5 grid md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700">
+                Nom du client *
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: BB Gym"
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
 
-              return (
-                <div
-                  key={c.id}
-                  className="rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 flex items-center justify-between gap-3"
-                  style={{ boxShadow: "0 10px 22px rgba(2,6,23,.06)" }}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    {c.logo_url ? (
-                      <img
-                        src={c.logo_url}
-                        alt={c.name}
-                        style={{ width: 40, height: 40, borderRadius: 14, objectFit: "cover" }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 14,
-                          background: "rgba(2,6,23,.06)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          color: "#334155",
-                        }}
-                      >
-                        {c.name?.slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
+            <div>
+              <label className="text-sm font-medium text-slate-700">
+                Email (optionnel)
+              </label>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="contact@client.com"
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
 
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{c.name}</div>
-                      <div className="text-sm text-slate-500 truncate">{c.phone ?? "—"}</div>
-                    </div>
-                  </div>
+            <div className="md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">
+                Téléphones (optionnel)
+              </label>
+              <textarea
+                value={phonesText}
+                onChange={(e) => setPhonesText(e.target.value)}
+                placeholder="Ex: 58 000 000, 71 000 000 (séparés par virgule ou ligne)"
+                rows={3}
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
+              />
+              <div className="mt-1 text-xs text-slate-500">
+                Converti automatiquement en tableau `phones[]`.
+              </div>
+            </div>
 
-                  <div className="flex items-center gap-2">
-                    {connected ? (
-                      <span className="badge badge-success">Meta connecté</span>
-                    ) : (
-                      <span className="badge badge-info">Meta non connecté</span>
-                    )}
-
-                    <a className="btn btn-primary" href={metaConnectUrl(c.id)}>
-                      Connecter Meta
-                    </a>
-                  </div>
-                </div>
-              );
-            })}
-
-            {clients.length === 0 ? (
-              <div className="muted mt-2">Aucun client pour le moment. Crée ton premier client à gauche.</div>
-            ) : null}
+            <div className="md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">
+                Règles / À éviter (optionnel)
+              </label>
+              <textarea
+                value={briefAvoid}
+                onChange={(e) => setBriefAvoid(e.target.value)}
+                placeholder="Ex: Ne pas utiliser humour noir, éviter promotions agressives, respecter charte…"
+                rows={4}
+                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
+              />
+              <div className="mt-1 text-xs text-slate-500">
+                (MVP) Stocké dans `clients.brief_avoid`.
+              </div>
+            </div>
           </div>
 
-          <div className="tip-box mt-5">
-            Étape suivante : après “Connecter Meta”, tu auras Page FB + IG Business du client dans la DB,
-            puis on fera le module “Publications” (auto-post).
+          {/* Social accounts manual */}
+          <SocialAccountsInline onChange={setSocials} />
+
+          {/* Error */}
+          {error ? (
+            <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 p-3 text-sm">
+              {error}
+            </div>
+          ) : null}
+
+          {/* Actions */}
+          <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-end">
+            <button
+              type="button"
+              onClick={() => router.push("/clients")}
+              className="px-4 py-3 rounded-2xl border bg-white hover:bg-slate-50 transition"
+              disabled={loading}
+            >
+              Annuler
+            </button>
+
+            <button
+              type="button"
+              onClick={onSubmit}
+              className="px-5 py-3 rounded-2xl bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Création..." : "Créer le client"}
+            </button>
           </div>
         </div>
       </div>
     </div>
   );
-}
-
-function Alert({ type, text }: { type: "error" | "ok"; text: string }) {
-  const cls = type === "error" ? "alert alert-error" : "alert alert-success";
-  return <div className={cls}>{text}</div>;
 }
