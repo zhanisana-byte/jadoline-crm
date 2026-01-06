@@ -2,32 +2,58 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+type ClientRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  logo_url: string | null;
+  created_at: string | null;
+  client_social_accounts?: { id: string }[] | null;
+  member_client_access?: { id: string }[] | null;
+};
+
 export default async function ClientsPage() {
   const supabase = await createClient();
 
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) redirect("/login");
 
-  const { data: profile } = await supabase
+  // ✅ On utilise agency_id (car current_agency_id n'existe pas chez toi)
+  const { data: profile, error: profileErr } = await supabase
     .from("users_profile")
-    .select("current_agency_id")
+    .select("agency_id")
     .eq("user_id", auth.user.id)
     .single();
 
-  const agencyId = profile?.current_agency_id;
+  if (profileErr) {
+    return (
+      <div className="p-6 md:p-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Erreur profil</div>
+          <div className="text-sm text-rose-700 mt-2">{profileErr.message}</div>
+        </div>
+      </div>
+    );
+  }
 
-  // Si pas d’agence active, on affiche un message (pas 404)
+  const agencyId = profile?.agency_id;
+
   if (!agencyId) {
     return (
       <div className="p-6 md:p-10">
         <div className="rounded-2xl border bg-white p-6">
-          <div className="text-lg font-semibold">Aucune agence active</div>
+          <div className="text-lg font-semibold">Aucune agence liée</div>
           <div className="text-sm text-slate-600 mt-1">
-            Sélectionne une agence (current_agency_id) dans ton profil.
+            Ton compte n’a pas de <code>agency_id</code> dans{" "}
+            <code>users_profile</code>. Va sur Profil et vérifie l’agence.
           </div>
-          <div className="mt-4">
+
+          <div className="mt-4 flex gap-3">
             <Link className="underline text-blue-600" href="/profile">
               Aller au profil
+            </Link>
+            <Link className="underline text-slate-600" href="/dashboard">
+              Retour dashboard
             </Link>
           </div>
         </div>
@@ -35,15 +61,31 @@ export default async function ClientsPage() {
     );
   }
 
-  const { data: clients } = await supabase
+  // ✅ Liste clients de l’agence
+  const { data: clients, error: clientsErr } = await supabase
     .from("clients")
-    .select(`
+    .select(
+      `
       id, name, category, logo_url, created_at,
       client_social_accounts(id),
       member_client_access(id)
-    `)
+    `
+    )
     .eq("agency_id", agencyId)
     .order("created_at", { ascending: false });
+
+  if (clientsErr) {
+    return (
+      <div className="p-6 md:p-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Erreur clients</div>
+          <div className="text-sm text-rose-700 mt-2">{clientsErr.message}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const rows = (clients ?? []) as ClientRow[];
 
   return (
     <div className="p-6 md:p-10">
@@ -76,7 +118,7 @@ export default async function ClientsPage() {
           </thead>
 
           <tbody>
-            {clients?.map((c) => (
+            {rows.map((c) => (
               <tr key={c.id} className="border-t hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
@@ -94,10 +136,11 @@ export default async function ClientsPage() {
                         </span>
                       )}
                     </div>
+
                     <div className="min-w-0">
                       <div className="font-medium truncate">{c.name}</div>
                       <div className="text-xs text-slate-500">
-                        {String(c.category)}
+                        {c.category ?? "STANDARD"}
                       </div>
                     </div>
                   </div>
@@ -106,17 +149,21 @@ export default async function ClientsPage() {
                 <td className="px-4 py-3">
                   {c.client_social_accounts?.length ?? 0}
                 </td>
+
                 <td className="px-4 py-3">
                   {c.member_client_access?.length ?? 0}
                 </td>
+
                 <td className="px-4 py-3 text-slate-500">
-                  {c.created_at ? new Date(c.created_at).toLocaleDateString() : "-"}
+                  {c.created_at
+                    ? new Date(c.created_at).toLocaleDateString()
+                    : "-"}
                 </td>
 
                 <td className="px-4 py-3 text-right">
                   <Link
                     href={`/clients/${c.id}`}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-slate-100"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-slate-100 transition"
                   >
                     ⚙️ Gérer
                   </Link>
@@ -124,10 +171,21 @@ export default async function ClientsPage() {
               </tr>
             ))}
 
-            {!clients?.length && (
+            {!rows.length && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
-                  Aucun client pour le moment
+                <td
+                  colSpan={5}
+                  className="px-4 py-10 text-center text-slate-500"
+                >
+                  Aucun client pour le moment.
+                  <div className="mt-2">
+                    <Link
+                      className="underline text-blue-600"
+                      href="/clients/create"
+                    >
+                      Créer le premier client
+                    </Link>
+                  </div>
                 </td>
               </tr>
             )}
