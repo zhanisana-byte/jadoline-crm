@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import SocialAccountsInline, { SocialDraft } from "@/components/SocialAccountsInline";
+import SocialAccountsInline, { type SocialDraft } from "@/components/clients/SocialAccountsInline";
 
 type Agency = { id: string; name: string };
 
