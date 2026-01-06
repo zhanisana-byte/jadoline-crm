@@ -1,519 +1,858 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
 
-type ClientRow = {
-  id: string;
-  name: string;
-  category?: string | null;
-  logo_url?: string | null;
-  created_at?: string | null;
-  phones?: string[] | null;
+type ProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  agency_id: string | null;
+  account_type: "AGENCY" | "SOCIAL_MANAGER" | string | null;
+  role: string | null;
 };
 
-type PhoneDraft = { country: string; number: string };
+type AgencyRow = {
+  id: string;
+  name: string;
+  // join_code supprimé côté UI (et idéalement côté select)
+};
 
-const COUNTRY_CODES: { code: string; label: string; dial: string }[] = [
-  { code: "TN", label: "Tunisie", dial: "+216" },
-  { code: "FR", label: "France", dial: "+33" },
-  { code: "AE", label: "UAE", dial: "+971" },
-  { code: "SA", label: "Saudi", dial: "+966" },
-  { code: "DZ", label: "Algérie", dial: "+213" },
-  { code: "MA", label: "Maroc", dial: "+212" },
-];
+type InviteRow = {
+  id: string;
+  agency_id: string;
+  email: string;
+  token: string;
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED" | string;
+  created_at: string;
+};
 
-export default function ClientsPage() {
-  const supabase = createClient();
+type MemberRow = {
+  user_id: string;
+  role: string;
+  status: string | null;
+  created_at: string | null;
+  profile: {
+    full_name: string | null;
+    avatar_url: string | null;
+    account_type: string | null;
+  } | null;
+};
+
+function cn(...s: Array<string | false | null | undefined>) {
+  return s.filter(Boolean).join(" ");
+}
+
+function initials(name?: string | null) {
+  const n = (name || "").trim();
+  if (!n) return "JD";
+  const parts = n.split(/\s+/).slice(0, 2);
+  return parts.map((p) => (p?.[0] || "").toUpperCase()).join("");
+}
+
+function formatDate(d: string) {
+  try {
+    return new Date(d).toLocaleDateString("fr-FR", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  } catch {
+    return d;
+  }
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+/** ✅ Avatar UI: image si dispo, sinon initiales */
+function Avatar({
+  name,
+  url,
+  size = 56,
+  className = "",
+}: {
+  name?: string | null;
+  url?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const s = `${size}px`;
+  return (
+    <div
+      className={cn("crm-avatar overflow-hidden", className)}
+      style={{ width: s, height: s }}
+      aria-label="Avatar"
+    >
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={name ? `Avatar de ${name}` : "Avatar"}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // fallback si url cassée
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <span>{initials(name)}</span>
+      )}
+    </div>
+  );
+}
+
+export default function ProfilePage() {
+  const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
+  const ran = useRef(false);
 
   const [loading, setLoading] = useState(true);
-  const [profileAgencyId, setProfileAgencyId] = useState<string | null>(null);
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [err, setErr] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // modal
-  const [open, setOpen] = useState(false);
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [agency, setAgency] = useState<AgencyRow | null>(null);
 
-  // form
-  const [name, setName] = useState("");
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [phones, setPhones] = useState<PhoneDraft[]>([
-    { country: "TN", number: "" },
-  ]);
-  const [saving, setSaving] = useState(false);
-  const [formErr, setFormErr] = useState<string | null>(null);
+  const [invitesForMe, setInvitesForMe] = useState<InviteRow[]>([]);
+  const [invitesForAgency, setInvitesForAgency] = useState<InviteRow[]>([]);
 
-  const canSave = useMemo(() => {
-    return name.trim().length >= 2 && !!profileAgencyId && !saving;
-  }, [name, profileAgencyId, saving]);
+  const [members, setMembers] = useState<MemberRow[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+
+  const isAgency = profile?.account_type === "AGENCY";
+
+  // Join (SM) — si tu veux le garder pour SM, on le laisse
+  const [joinCode, setJoinCode] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
+
+  // Agency invite SM by email
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  // Edit modal
+  const [editOpen, setEditOpen] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  const [editFullName, setEditFullName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editAgencyName, setEditAgencyName] = useState("");
+
+  // ✅ Upload avatar
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+
+  // Switch (SM -> Agency)
+  const [switchBusy, setSwitchBusy] = useState(false);
+
+  // Toast
+  const [toast, setToast] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
-    let isMounted = true;
+    return () => {
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    };
+  }, [avatarPreview]);
 
-    async function boot() {
-      setLoading(true);
-      setErr(null);
+  function loginUrl() {
+    return "/login?next=/profile";
+  }
 
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) {
-        window.location.href = "/login";
-        return;
-      }
-
-      // agency_id (pas current_agency_id)
-      const { data: profile, error: pErr } = await supabase
-        .from("users_profile")
-        .select("agency_id")
-        .eq("user_id", auth.user.id)
-        .single();
-
-      if (!isMounted) return;
-
-      if (pErr) {
-        setErr(pErr.message);
-        setLoading(false);
-        return;
-      }
-
-      const agencyId = profile?.agency_id || null;
-      setProfileAgencyId(agencyId);
-
-      if (!agencyId) {
-        setLoading(false);
-        return;
-      }
-
-      const { data: list, error: lErr } = await supabase
-        .from("clients")
-        .select("id, name, logo_url, created_at, phones")
+  async function loadMembers(agencyId: string) {
+    setMembersLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("agency_members")
+        .select(
+          `
+          user_id,
+          role,
+          status,
+          created_at,
+          profile:users_profile (
+            full_name,
+            avatar_url,
+            account_type
+          )
+        `
+        )
         .eq("agency_id", agencyId)
         .order("created_at", { ascending: false });
 
-      if (!isMounted) return;
-
-      if (lErr) {
-        setErr(lErr.message);
-        setLoading(false);
+      if (error) {
+        setMembers([]);
+        setToast({ type: "err", msg: `Members: ${error.message}` });
         return;
       }
 
-      setClients((list as any) || []);
+      const rows = (data || []) as any[];
+      setMembers(
+        rows.map((r) => ({
+          user_id: r.user_id,
+          role: r.role,
+          status: r.status ?? null,
+          created_at: r.created_at ?? null,
+          profile: r.profile ?? null,
+        }))
+      );
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  async function loadAll() {
+    setLoading(true);
+
+    const { data: u, error: uErr } = await supabase.auth.getUser();
+    if (uErr || !u?.user) {
+      router.replace(loginUrl());
+      return;
+    }
+    setUserEmail(u.user.email ?? null);
+
+    const { data: p, error: pErr } = await supabase
+      .from("users_profile")
+      .select("user_id, full_name, avatar_url, agency_id, account_type, role")
+      .eq("user_id", u.user.id)
+      .single();
+
+    if (pErr) {
+      setToast({ type: "err", msg: `Profil introuvable: ${pErr.message}` });
+      setProfile(null);
       setLoading(false);
+      return;
     }
 
-    boot();
-    return () => {
-      isMounted = false;
-    };
-  }, [supabase]);
+    const pr = p as ProfileRow;
+    setProfile(pr);
 
-  function resetForm() {
-    setName("");
-    setLogoFile(null);
-    setLogoPreview(null);
-    setPhones([{ country: "TN", number: "" }]);
-    setFormErr(null);
+    // ✅ Agency: on ne sélectionne plus join_code
+    let ag: AgencyRow | null = null;
+    if (pr.agency_id) {
+      const { data: a, error: aErr } = await supabase
+        .from("agencies")
+        .select("id, name")
+        .eq("id", pr.agency_id)
+        .single();
+      ag = !aErr && a ? (a as AgencyRow) : null;
+    }
+    setAgency(ag);
+
+    // Invites for me (SM) by email
+    if (u.user.email) {
+      const { data: invMe, error: invMeErr } = await supabase
+        .from("agency_invites")
+        .select("id, agency_id, email, token, status, created_at")
+        .eq("email", u.user.email)
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false });
+      setInvitesForMe(!invMeErr ? ((invMe || []) as InviteRow[]) : []);
+    } else {
+      setInvitesForMe([]);
+    }
+
+    // Invites for agency (AGENCY receives)
+    if (pr.account_type === "AGENCY" && pr.agency_id) {
+      const { data: invAg, error: invAgErr } = await supabase
+        .from("agency_invites")
+        .select("id, agency_id, email, token, status, created_at")
+        .eq("agency_id", pr.agency_id)
+        .eq("status", "PENDING")
+        .order("created_at", { ascending: false });
+      setInvitesForAgency(!invAgErr ? ((invAg || []) as InviteRow[]) : []);
+    } else {
+      setInvitesForAgency([]);
+    }
+
+    // Members list (only for AGENCY)
+    if (pr.account_type === "AGENCY" && pr.agency_id) {
+      await loadMembers(pr.agency_id);
+    } else {
+      setMembers([]);
+    }
+
+    setLoading(false);
   }
 
-  function openModal() {
-    resetForm();
-    setOpen(true);
+  useEffect(() => {
+    if (ran.current) return;
+    ran.current = true;
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openEdit() {
+    setEditFullName(profile?.full_name ?? "");
+    setEditEmail(userEmail ?? "");
+    setEditAgencyName(agency?.name ?? "");
+
+    // reset upload state
+    setAvatarFile(null);
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    setAvatarPreview(null);
+
+    setEditOpen(true);
   }
 
-  function closeModal() {
-    setOpen(false);
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast({ type: "ok", msg: "Copié ✅" });
+    } catch {
+      setToast({ type: "err", msg: "Impossible de copier." });
+    }
   }
 
-  function addPhone() {
-    setPhones((prev) => [...prev, { country: "TN", number: "" }]);
+  async function requestJoin() {
+    if (!joinCode.trim()) {
+      setToast({ type: "err", msg: "Entrez un code agence." });
+      return;
+    }
+    setJoinBusy(true);
+    try {
+      const { error } = await supabase.rpc("request_join_agency", { p_code: joinCode.trim() });
+      if (error) {
+        setToast({ type: "err", msg: `Erreur: ${error.message}` });
+        return;
+      }
+      setJoinCode("");
+      setToast({ type: "ok", msg: "Demande envoyée ✅ (en attente)" });
+      await loadAll();
+    } finally {
+      setJoinBusy(false);
+    }
   }
 
-  function removePhone(idx: number) {
-    setPhones((prev) => prev.filter((_, i) => i !== idx));
+  // ✅ Agency invite Social Manager by email
+  async function inviteSocialManagerByEmail() {
+    const em = inviteEmail.trim().toLowerCase();
+    if (!em || !isValidEmail(em)) {
+      setToast({ type: "err", msg: "Email invalide." });
+      return;
+    }
+    if (!isAgency || !profile?.agency_id) {
+      setToast({ type: "err", msg: "Action réservée à une agence." });
+      return;
+    }
+
+    setInviteBusy(true);
+    try {
+      const { error } = await supabase.rpc("invite_social_manager", { p_email: em });
+      if (error) {
+        setToast({ type: "err", msg: `Invitation: ${error.message}` });
+        return;
+      }
+      setInviteEmail("");
+      setToast({ type: "ok", msg: "Invitation envoyée ✅" });
+      await loadAll();
+    } finally {
+      setInviteBusy(false);
+    }
   }
 
-  function updatePhone(idx: number, patch: Partial<PhoneDraft>) {
-    setPhones((prev) =>
-      prev.map((p, i) => (i === idx ? { ...p, ...patch } : p))
-    );
+  async function acceptInviteForMe(token: string) {
+    const { error } = await supabase.rpc("accept_agency_invite", { p_token: token });
+    if (error) {
+      setToast({ type: "err", msg: `Impossible d’accepter: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Invitation acceptée ✅" });
+    await loadAll();
   }
 
-  function dialFor(country: string) {
-    return COUNTRY_CODES.find((c) => c.code === country)?.dial || "+216";
+  async function rejectInvite(inviteId: string) {
+    const { error } = await supabase.rpc("reject_agency_invite", { p_invite_id: inviteId });
+    if (error) {
+      setToast({ type: "err", msg: `Erreur: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Invitation refusée." });
+    await loadAll();
   }
 
-  async function uploadLogoIfAny(agencyId: string) {
-    if (!logoFile) return null;
+  async function approveInviteForAgency(inviteId: string) {
+    const { error } = await supabase.rpc("approve_agency_invite", { p_invite_id: inviteId });
+    if (error) {
+      setToast({ type: "err", msg: `Erreur: ${error.message}` });
+      return;
+    }
+    setToast({ type: "ok", msg: "Membre ajouté ✅" });
+    await loadAll();
+  }
 
-    // ⚠️ bucket: "client-logos" (à créer dans Supabase Storage)
-    const ext = logoFile.name.split(".").pop() || "png";
-    const fileName = `${crypto.randomUUID()}.${ext}`;
-    const path = `${agencyId}/${fileName}`;
+  /** ✅ Upload avatar to Supabase Storage and returns public URL */
+  async function uploadAvatar(file: File) {
+    if (!profile) throw new Error("Profile introuvable");
+    // Bucket à créer dans Supabase Storage: "avatars"
+    const bucket = "avatars";
 
-    const { error: upErr } = await supabase.storage
-      .from("client-logos")
-      .upload(path, logoFile, {
-        cacheControl: "3600",
-        upsert: false,
-      });
+    // petite sécurité
+    const maxMB = 3;
+    if (file.size > maxMB * 1024 * 1024) {
+      throw new Error(`Image trop grande (max ${maxMB}MB).`);
+    }
 
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
+    const path = `users/${profile.user_id}/avatar.${safeExt}`;
+
+    // upload (upsert)
+    const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
+      upsert: true,
+      cacheControl: "3600",
+      contentType: file.type || undefined,
+    });
     if (upErr) throw new Error(upErr.message);
 
-    const { data } = supabase.storage.from("client-logos").getPublicUrl(path);
-    return data.publicUrl || null;
+    // public URL
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+    const publicUrl = data?.publicUrl;
+    if (!publicUrl) throw new Error("Impossible d’obtenir l’URL publique.");
+    return publicUrl;
   }
 
-  async function createClient() {
-    setFormErr(null);
-    setSaving(true);
-
+  async function saveEdit() {
+    if (!profile) return;
+    setSaveBusy(true);
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user) throw new Error("Non connecté");
+      let newAvatarUrl: string | null = profile.avatar_url ?? null;
 
-      if (!profileAgencyId) throw new Error("Aucune agence liée");
+      // ✅ si user a choisi un fichier, on upload d’abord
+      if (avatarFile) {
+        setAvatarBusy(true);
+        try {
+          newAvatarUrl = await uploadAvatar(avatarFile);
+        } finally {
+          setAvatarBusy(false);
+        }
+      }
 
-      const cleanedPhones = phones
-        .map((p) => {
-          const num = p.number.trim();
-          if (!num) return null;
-          // on stocke sous forme "+216 12345678"
-          return `${dialFor(p.country)} ${num}`;
+      const { error: pErr } = await supabase
+        .from("users_profile")
+        .update({
+          full_name: editFullName.trim() || null,
+          avatar_url: newAvatarUrl,
         })
-        .filter(Boolean) as string[];
+        .eq("user_id", profile.user_id);
 
-      const logoUrl = await uploadLogoIfAny(profileAgencyId);
+      if (pErr) {
+        setToast({ type: "err", msg: `Erreur profil: ${pErr.message}` });
+        return;
+      }
 
-      // ✅ insert direct (si RLS ok) sinon on fera API route après
-      const { data: inserted, error: insErr } = await supabase
-        .from("clients")
-        .insert({
-          agency_id: profileAgencyId,
-          name: name.trim(),
-          phones: cleanedPhones,
-          logo_url: logoUrl,
-          created_by: user.id,
-        })
-        .select("id, name, logo_url, created_at, phones")
-        .single();
+      if (isAgency && profile.agency_id) {
+        const newName = editAgencyName.trim();
+        if (newName) {
+          const { error: aErr } = await supabase
+            .from("agencies")
+            .update({ name: newName })
+            .eq("id", profile.agency_id);
+          if (aErr) {
+            setToast({ type: "err", msg: `Erreur agence: ${aErr.message}` });
+            return;
+          }
+        }
+      }
 
-      if (insErr) throw new Error(insErr.message);
+      const newEmail = editEmail.trim();
+      if (newEmail && newEmail !== (userEmail ?? "")) {
+        const { error: eErr } = await supabase.auth.updateUser({ email: newEmail });
+        if (eErr) {
+          setToast({ type: "err", msg: `Email: ${eErr.message}` });
+          return;
+        }
+        setToast({ type: "ok", msg: "Email modifié (vérifiez votre boîte mail)." });
+      } else {
+        setToast({ type: "ok", msg: "Modifications enregistrées ✅" });
+      }
 
-      setClients((prev) => [inserted as any, ...prev]);
-      setOpen(false);
-
-      // Option: rediriger vers gestion
-      // window.location.href = `/clients/${inserted.id}`;
+      setEditOpen(false);
+      await loadAll();
     } catch (e: any) {
-      setFormErr(e?.message || "Erreur création");
+      setToast({ type: "err", msg: e?.message || "Erreur inconnue." });
     } finally {
-      setSaving(false);
+      setSaveBusy(false);
     }
   }
 
-  if (loading) {
-    return (
-      <div className="p-6 md:p-10">
-        <div className="rounded-2xl border bg-white p-6">Chargement…</div>
-      </div>
-    );
+  async function switchToAgency() {
+    setSwitchBusy(true);
+    try {
+      const { error } = await supabase.rpc("switch_to_agency");
+      if (error) {
+        setToast({
+          type: "err",
+          msg: "Switch indisponible (RPC manquante ou erreur): " + error.message,
+        });
+        return;
+      }
+      setToast({ type: "ok", msg: "Vous êtes maintenant une Agence ✅" });
+      await loadAll();
+    } finally {
+      setSwitchBusy(false);
+    }
   }
 
-  if (err) {
-    return (
-      <div className="p-6 md:p-10">
-        <div className="rounded-2xl border bg-white p-6">
-          <div className="text-lg font-semibold">Erreur</div>
-          <div className="text-sm text-rose-700 mt-2">{err}</div>
-        </div>
-      </div>
-    );
-  }
+  const heroTitle = isAgency ? agency?.name || "Mon agence" : profile?.full_name || "Mon profil";
+  const heroSub = isAgency ? `Compte Agence • ${profile?.full_name || "Owner"}` : "Social Manager";
 
-  if (!profileAgencyId) {
-    return (
-      <div className="p-6 md:p-10">
-        <div className="rounded-2xl border bg-white p-6">
-          <div className="text-lg font-semibold">Aucune agence active</div>
-          <div className="text-sm text-slate-600 mt-1">
-            Ton profil n’a pas <code>agency_id</code>. Va sur Profil et vérifie.
-          </div>
-          <div className="mt-3">
-            <Link className="underline text-blue-600" href="/profile">
-              Aller au profil
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const invites = isAgency ? invitesForAgency : invitesForMe;
+  const inviteCount = invites.length;
 
   return (
-    <div className="p-6 md:p-10">
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Clients</h1>
-          <p className="text-sm text-slate-500">
-            Gérez vos clients et leurs réseaux sociaux
-          </p>
+    <div className="crm-shell">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={cn("crm-toast", toast.type === "ok" ? "crm-toast-ok" : "crm-toast-err")}>
+            {toast.msg}
+          </div>
         </div>
+      )}
 
-        <button
-          onClick={openModal}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition"
-        >
-          + Créer un client
-        </button>
-      </div>
-
-      <div className="rounded-2xl border bg-white/90 overflow-hidden shadow-sm">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="text-left px-4 py-3">Client</th>
-              <th className="text-left px-4 py-3">Téléphones</th>
-              <th className="text-left px-4 py-3">Création</th>
-              <th className="px-4 py-3 text-right">Action</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {clients.map((c) => (
-              <tr key={c.id} className="border-t hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center">
-                      {c.logo_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={c.logo_url}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="font-semibold text-slate-400">
-                          {c.name?.slice(0, 1)?.toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{c.name}</div>
-                      <div className="text-xs text-slate-500">
-                        ID: {c.id.slice(0, 8)}…
-                      </div>
-                    </div>
-                  </div>
-                </td>
-
-                <td className="px-4 py-3 text-slate-600">
-                  {c.phones?.length ? (
-                    <div className="flex flex-col gap-1">
-                      {c.phones.slice(0, 2).map((p, i) => (
-                        <span key={i}>{p}</span>
-                      ))}
-                      {c.phones.length > 2 && (
-                        <span className="text-xs text-slate-400">
-                          +{c.phones.length - 2} autres
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
-
-                <td className="px-4 py-3 text-slate-500">
-                  {c.created_at
-                    ? new Date(c.created_at).toLocaleDateString()
-                    : "-"}
-                </td>
-
-                <td className="px-4 py-3 text-right">
-                  <Link
-                    href={`/clients/${c.id}`}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-slate-100 transition"
-                  >
-                    ⚙️ Gérer
-                  </Link>
-                </td>
-              </tr>
-            ))}
-
-            {!clients.length && (
-              <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-slate-500">
-                  Aucun client pour le moment.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* MODAL */}
-      {open && (
-        <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/30"
-            onClick={closeModal}
-          />
-          <div className="absolute inset-0 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl border overflow-hidden">
-              <div className="p-5 border-b flex items-center justify-between">
-                <div>
-                  <div className="text-lg font-semibold">Créer un client</div>
-                  <div className="text-xs text-slate-500">
-                    Infos client + logo + téléphones (MVP)
-                  </div>
-                </div>
-                <button
-                  onClick={closeModal}
-                  className="h-10 w-10 rounded-xl border hover:bg-slate-50"
-                  aria-label="Fermer"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="p-5 space-y-5">
-                {formErr && (
-                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-rose-700 text-sm">
-                    {formErr}
-                  </div>
-                )}
-
-                <div>
-                  <label className="text-sm font-medium">Nom du client *</label>
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="mt-2 w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="Ex: BB Gym Ennasr"
-                  />
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium">Logo (upload)</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="mt-2 w-full"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setLogoFile(f);
-                        if (f) setLogoPreview(URL.createObjectURL(f));
-                        else setLogoPreview(null);
-                      }}
-                    />
-                    <div className="text-xs text-slate-500 mt-1">
-                      Stockage: bucket <code>client-logos</code>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="h-14 w-14 rounded-2xl bg-slate-100 overflow-hidden flex items-center justify-center border">
-                      {logoPreview ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={logoPreview}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-slate-400 text-xs">Preview</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Choisis une image pour afficher le logo du client.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-slate-50 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="font-semibold">Téléphones</div>
-                    <button
-                      type="button"
-                      onClick={addPhone}
-                      className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
-                    >
-                      + Ajouter un numéro
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    {phones.map((p, idx) => (
-                      <div
-                        key={idx}
-                        className="grid grid-cols-[140px_1fr_44px] gap-2 items-center"
-                      >
-                        <select
-                          value={p.country}
-                          onChange={(e) =>
-                            updatePhone(idx, { country: e.target.value })
-                          }
-                          className="rounded-xl border px-3 py-2 bg-white"
-                        >
-                          {COUNTRY_CODES.map((c) => (
-                            <option key={c.code} value={c.code}>
-                              {c.label} ({c.dial})
-                            </option>
-                          ))}
-                        </select>
-
-                        <input
-                          value={p.number}
-                          onChange={(e) =>
-                            updatePhone(idx, { number: e.target.value })
-                          }
-                          className="rounded-xl border px-3 py-2 bg-white outline-none"
-                          placeholder="Ex: 58 433 782"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => removePhone(idx)}
-                          disabled={phones.length === 1}
-                          className="h-11 w-11 rounded-xl border bg-white hover:bg-rose-50 disabled:opacity-50"
-                          title="Supprimer"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-3 text-xs text-slate-500">
-                    Les numéros seront enregistrés sous forme : <code>+216 58 433 782</code>
-                  </div>
+      <div className="crm-container">
+        <div className="crm-card overflow-hidden">
+          {/* HERO */}
+          <div className={cn("crm-hero", isAgency ? "crm-hero-agency" : "crm-hero-sm")}>
+            <div className="relative z-[1] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-4 min-w-0">
+                {/* ✅ Photo au lieu de mot */}
+                <Avatar
+                  name={isAgency ? agency?.name : profile?.full_name}
+                  url={isAgency ? null : profile?.avatar_url}
+                  size={58}
+                />
+                <div className="min-w-0">
+                  <div className="text-2xl font-semibold truncate">{heroTitle}</div>
+                  <div className="text-white/85 text-sm mt-1">{heroSub}</div>
+                  {userEmail && <div className="text-white/75 text-xs mt-1 truncate">{userEmail}</div>}
                 </div>
               </div>
 
-              <div className="p-5 border-t flex items-center justify-between gap-3">
-                <button
-                  onClick={closeModal}
-                  className="px-4 py-2 rounded-xl border hover:bg-slate-50"
-                >
-                  Annuler
+              {/* ✅ “Modifier profil” uniquement dans le header (comme tu as demandé) */}
+              <div className="flex flex-wrap gap-2">
+                <button onClick={openEdit} className="crm-btn-glass">
+                  ✏️ Modifier profil
                 </button>
-
-                <button
-                  onClick={createClient}
-                  disabled={!canSave}
-                  className="px-5 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
-                >
-                  {saving ? "Création..." : "Créer"}
+                <button onClick={() => loadAll()} className="crm-btn-glass">
+                  ⟳ Actualiser
                 </button>
               </div>
             </div>
           </div>
+
+          {/* CONTENT */}
+          <div className="p-5 sm:p-7">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* LEFT */}
+              <div className="crm-card-soft p-5">
+                <div className="text-sm font-semibold">{isAgency ? "Identifiants agence" : "Rejoindre une agence"}</div>
+                <div className="text-sm text-slate-600 mt-1">
+                  {isAgency ? "Partagez votre identifiant d’agence." : "Entrez le code fourni par une agence."}
+                </div>
+
+                {isAgency ? (
+                  <div className="mt-4 space-y-2">
+                    {/* ✅ AGENCE: on supprime join_code et on laisse seulement ID */}
+                    <div className="flex items-center gap-2">
+                      <div className="crm-pill flex-1">
+                        ID Agence: <span className="font-extrabold">{profile?.agency_id ?? "—"}</span>
+                      </div>
+                      <button
+                        onClick={() => profile?.agency_id && copyText(profile.agency_id)}
+                        className="crm-btn-soft"
+                      >
+                        Copier
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-slate-500 mt-2">
+                      Partagez cet ID à votre Social Manager pour rattachement (ou via invitation email).
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 flex items-center gap-2">
+                    <input
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value)}
+                      placeholder="Code agence"
+                      className="crm-input"
+                    />
+                    <button onClick={requestJoin} disabled={joinBusy} className="crm-btn-primary">
+                      {joinBusy ? "..." : "Rejoindre"}
+                    </button>
+                  </div>
+                )}
+
+                {/* ✅ SM: on supprime “Agence actuelle” */}
+                {!isAgency && (
+                  <div className="mt-4 space-y-2">
+                    <button onClick={switchToAgency} disabled={switchBusy} className="crm-btn-primary w-full">
+                      {switchBusy ? "..." : "Créer mon agence (Switch)"}
+                    </button>
+                    <div className="text-xs text-slate-500">
+                      Le switch crée votre agence et vous passe en mode <b>AGENCY</b>.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* RIGHT */}
+              <div className="crm-card-soft p-5 lg:col-span-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold">Invitations</div>
+                    <div className="text-sm text-slate-600 mt-1">
+                      {isAgency
+                        ? "Demandes reçues pour rejoindre votre agence."
+                        : "Invitations reçues pour rejoindre une agence."}
+                    </div>
+                  </div>
+                  <span className="crm-badge">{inviteCount}</span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {inviteCount === 0 ? (
+                    <div className="crm-empty">Aucune invitation en attente.</div>
+                  ) : (
+                    invites.map((inv) => (
+                      <div key={inv.id} className="crm-invite">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="font-extrabold truncate">{inv.email}</div>
+                            <div className="text-sm text-slate-600 mt-1">Reçu le {formatDate(inv.created_at)}</div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            {isAgency ? (
+                              <>
+                                <button onClick={() => approveInviteForAgency(inv.id)} className="crm-btn-ok">
+                                  Accepter
+                                </button>
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
+                                  Refuser
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => acceptInviteForMe(inv.token)} className="crm-btn-ok">
+                                  Accepter
+                                </button>
+                                <button onClick={() => rejectInvite(inv.id)} className="crm-btn-danger">
+                                  Refuser
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {!isAgency && (
+                          <div className="mt-3 text-xs text-slate-500">(Vous pouvez aussi accepter via /invite?token=…)</div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {loading && <div className="mt-4 text-sm text-slate-600">Chargement…</div>}
+              </div>
+            </div>
+
+            {/* AGENCY SECTION: Invite SM + Team */}
+            {isAgency && (
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Invite SM */}
+                <div className="crm-card-soft p-5">
+                  <div className="text-sm font-semibold">Inviter Social Manager</div>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Entrez l’email du Social Manager (doit exister dans Jadoline).
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <input
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="email@exemple.com"
+                      className="crm-input"
+                    />
+                    <button
+                      onClick={inviteSocialManagerByEmail}
+                      disabled={inviteBusy}
+                      className="crm-btn-primary w-full"
+                    >
+                      {inviteBusy ? "Envoi..." : "Envoyer invitation"}
+                    </button>
+                    <div className="text-xs text-slate-500">L’invitation apparaîtra dans “Invitations”.</div>
+                  </div>
+                </div>
+
+                {/* Team */}
+                <div className="crm-card-soft p-5 lg:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">Équipe Social Managers</div>
+                      <div className="text-sm text-slate-600 mt-1">Membres actuels de l’agence.</div>
+                    </div>
+                    <span className="crm-badge">{members.length}</span>
+                  </div>
+
+                  <div className="mt-4">
+                    {membersLoading ? (
+                      <div className="text-sm text-slate-600">Chargement de l’équipe…</div>
+                    ) : members.length === 0 ? (
+                      <div className="crm-empty">Aucun membre pour le moment.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {members.map((m) => {
+                          const nm = m.profile?.full_name || m.user_id.slice(0, 8);
+                          const at = m.profile?.account_type || "";
+                          return (
+                            <div key={m.user_id} className="crm-invite">
+                              <div className="flex items-center gap-3">
+                                <Avatar name={nm} url={m.profile?.avatar_url ?? null} size={46} className="text-sm" />
+                                <div className="min-w-0">
+                                  <div className="font-extrabold truncate">{nm}</div>
+                                  <div className="text-sm text-slate-600 mt-1">
+                                    {at || "MEMBER"} • {m.role} • {m.status || "active"}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button onClick={() => router.push("/recap")} className="crm-btn-soft">
+                      Ouvrir Récap
+                    </button>
+                    <button onClick={() => router.push("/dashboard")} className="crm-btn-soft">
+                      Dashboard
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      )}
+
+        {/* MODAL EDIT */}
+        {editOpen && (
+          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4">
+            <div className="crm-modal">
+              <div className="crm-modal-head">
+                <div>
+                  <div className="text-lg font-black">Modifier profil</div>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Nom, email, photo{isAgency ? ", agence" : ""}
+                  </div>
+                </div>
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-4">
+                  <Avatar
+                    name={editFullName || profile?.full_name}
+                    url={avatarPreview || profile?.avatar_url}
+                    size={64}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold">Photo de profil</div>
+                    <div className="text-xs text-slate-500 mt-1">PNG/JPG/WebP • max 3MB</div>
+
+                    <label className="inline-flex items-center gap-2 mt-3 cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          setAvatarFile(f);
+                          if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                          setAvatarPreview(f ? URL.createObjectURL(f) : null);
+                        }}
+                      />
+                      <span className="crm-btn-soft">📷 Choisir une image</span>
+                      {(avatarFile || avatarPreview) && (
+                        <button
+                          type="button"
+                          className="crm-btn-soft"
+                          onClick={() => {
+                            setAvatarFile(null);
+                            if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+                            setAvatarPreview(null);
+                          }}
+                        >
+                          Retirer
+                        </button>
+                      )}
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Nom du profil</label>
+                  <input
+                    value={editFullName}
+                    onChange={(e) => setEditFullName(e.target.value)}
+                    className="crm-input mt-2"
+                    placeholder="Votre nom"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Email</label>
+                  <input
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="crm-input mt-2"
+                    placeholder="email@exemple.com"
+                  />
+                  <div className="text-xs text-slate-500 mt-2">Si l’email change, Supabase peut demander une confirmation.</div>
+                </div>
+
+                {isAgency && (
+                  <div>
+                    <label className="text-sm font-bold">Nom de l’agence</label>
+                    <input
+                      value={editAgencyName}
+                      onChange={(e) => setEditAgencyName(e.target.value)}
+                      className="crm-input mt-2"
+                      placeholder="Nom agence"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="crm-modal-foot">
+                <button onClick={() => setEditOpen(false)} className="crm-btn-soft">
+                  Annuler
+                </button>
+                <button
+                  onClick={saveEdit}
+                  disabled={saveBusy || avatarBusy}
+                  className="crm-btn-primary"
+                  title={avatarBusy ? "Upload en cours..." : undefined}
+                >
+                  {saveBusy || avatarBusy ? "Enregistrement..." : "Enregistrer"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
