@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from "react";
 
-type SocialDraft = {
+export type SocialDraft = {
   platform: "META_FACEBOOK_PAGE" | "META_INSTAGRAM" | "TIKTOK" | "YOUTUBE";
   value: string;
 };
 
-export function SocialAccountsInline({
+export default function SocialAccountsInline({
   onChange,
 }: {
   onChange: (drafts: SocialDraft[]) => void;
@@ -49,60 +49,80 @@ export function SocialAccountsInline({
     return "YouTube (nom de chaîne)";
   }
 
+  const Btn = ({
+    disabled,
+    children,
+    onClick,
+  }: {
+    disabled?: boolean;
+    children: React.ReactNode;
+    onClick: () => void;
+  }) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[
+        "px-3 py-2 rounded-xl border text-sm transition",
+        disabled
+          ? "opacity-40 cursor-not-allowed bg-white"
+          : "bg-white hover:bg-slate-50",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+
   return (
-    <div style={{ marginTop: 18 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+    <div className="mt-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <div style={{ fontWeight: 800 }}>Réseaux sociaux (manuel MVP)</div>
-          <div style={{ color: "#64748b", fontSize: 12 }}>
-            Pas de liens, juste les noms/@username. (OAuth Meta/TikTok plus tard)
+          <div className="font-semibold">Réseaux sociaux (manuel MVP)</div>
+          <div className="text-xs text-slate-500">
+            Ajoute juste les noms/@username (connexion OAuth plus tard).
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" disabled={!canAdd.fb} onClick={() => add("META_FACEBOOK_PAGE")} style={btn}>
+        <div className="flex gap-2 flex-wrap">
+          <Btn disabled={!canAdd.fb} onClick={() => add("META_FACEBOOK_PAGE")}>
             + Facebook
-          </button>
-          <button type="button" disabled={!canAdd.ig} onClick={() => add("META_INSTAGRAM")} style={btn}>
+          </Btn>
+          <Btn disabled={!canAdd.ig} onClick={() => add("META_INSTAGRAM")}>
             + Instagram
-          </button>
-          <button type="button" disabled={!canAdd.tt} onClick={() => add("TIKTOK")} style={btn}>
+          </Btn>
+          <Btn disabled={!canAdd.tt} onClick={() => add("TIKTOK")}>
             + TikTok
-          </button>
-          <button type="button" disabled={!canAdd.yt} onClick={() => add("YOUTUBE")} style={btn}>
+          </Btn>
+          <Btn disabled={!canAdd.yt} onClick={() => add("YOUTUBE")}>
             + YouTube
-          </button>
+          </Btn>
         </div>
       </div>
 
       {drafts.length === 0 ? (
-        <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 13 }}>Aucun réseau ajouté.</div>
+        <div className="mt-3 text-sm text-slate-400">Aucun réseau ajouté.</div>
       ) : (
-        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+        <div className="mt-3 grid gap-3">
           {drafts.map((d, idx) => (
             <div
               key={idx}
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 14,
-                padding: 12,
-                background: "#fff",
-                display: "grid",
-                gridTemplateColumns: "220px 1fr 44px",
-                gap: 10,
-                alignItems: "center",
-              }}
+              className="rounded-2xl border bg-white p-3 md:p-4 grid md:grid-cols-[260px_1fr_48px] gap-3 items-center"
             >
-              <div style={{ fontWeight: 700 }}>{label(d.platform)}</div>
+              <div className="font-medium">{label(d.platform)}</div>
 
               <input
                 value={d.value}
                 onChange={(e) => update(idx, e.target.value)}
-                placeholder="Ex: bbgym_gafsa"
-                style={input}
+                placeholder="Ex: @bbgym_gafsa"
+                className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-blue-200"
               />
 
-              <button type="button" onClick={() => remove(idx)} title="Supprimer" style={del}>
+              <button
+                type="button"
+                onClick={() => remove(idx)}
+                title="Supprimer"
+                className="h-12 w-12 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition"
+              >
                 ✕
               </button>
             </div>
@@ -112,29 +132,3 @@ export function SocialAccountsInline({
     </div>
   );
 }
-
-const btn: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #e2e8f0",
-  background: "white",
-  cursor: "pointer",
-};
-
-const input: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #e2e8f0",
-  outline: "none",
-};
-
-const del: React.CSSProperties = {
-  width: 44,
-  height: 44,
-  borderRadius: 12,
-  border: "1px solid #fee2e2",
-  background: "#fff1f2",
-  color: "#b91c1c",
-  cursor: "pointer",
-};
