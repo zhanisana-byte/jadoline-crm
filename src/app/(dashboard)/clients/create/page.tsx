@@ -1,248 +1,196 @@
-"use client";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import SocialAccountsInline, { type SocialDraft } from "@/components/clients/SocialAccountsInline";
+type ClientRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  logo_url: string | null;
+  created_at: string | null;
+  client_social_accounts?: { id: string }[] | null;
+  member_client_access?: { id: string }[] | null;
+};
 
-type Agency = { id: string; name: string };
+export default async function ClientsPage() {
+  const supabase = await createClient();
 
-export default function CreateClientPage() {
-  const supabase = createClient();
-  const router = useRouter();
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) redirect("/login");
 
-  const [loading, setLoading] = useState(false);
-  const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [agencyId, setAgencyId] = useState<string>("");
+  // ✅ IMPORTANT: tu n'as pas current_agency_id, donc on utilise agency_id
+  const { data: profile, error: profileErr } = await supabase
+    .from("users_profile")
+    .select("agency_id")
+    .eq("user_id", auth.user.id)
+    .single();
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phonesText, setPhonesText] = useState("");
-  const [logoUrl, setLogoUrl] = useState("");
-  const [briefAvoid, setBriefAvoid] = useState("");
-
-  const [socials, setSocials] = useState<SocialDraft[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  // Load agencies user is member of + current_agency_id
-  useEffect(() => {
-    (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) {
-        router.push("/login");
-        return;
-      }
-
-      const { data: profile } = await supabase
-        .from("users_profile")
-        .select("current_agency_id")
-        .eq("user_id", auth.user.id)
-        .single();
-
-      const { data: myAgencies } = await supabase
-        .from("agency_members")
-        .select("agency_id, agencies:agencies(id, name)")
-        .eq("user_id", auth.user.id);
-
-      const list: Agency[] =
-        myAgencies
-          ?.map((r: any) => r.agencies)
-          ?.filter(Boolean)
-          ?.map((a: any) => ({ id: a.id, name: a.name })) ?? [];
-
-      setAgencies(list);
-
-      // default agency selection
-      const def = profile?.current_agency_id || list?.[0]?.id || "";
-      setAgencyId(def);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const phonesArr = useMemo(() => {
-    return phonesText
-      .split(/[,;\n]/g)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }, [phonesText]);
-
-  async function onSubmit() {
-    setError(null);
-
-    if (!agencyId) return setError("Choisis une agence propriétaire.");
-    if (!name.trim()) return setError("Le nom du client est obligatoire.");
-
-    setLoading(true);
-    try {
-      const res = await fetch("/clients/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agency_id: agencyId,
-          name: name.trim(),
-          email: email.trim() || null,
-          phones: phonesArr,
-          logo_url: logoUrl.trim() || null,
-          brief_avoid: briefAvoid.trim() || null,
-          socials,
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json?.error || "Erreur inconnue");
-        setLoading(false);
-        return;
-      }
-
-      // ✅ redirect to clients list (ou vers page client directement)
-      router.push(`/clients/${json.client_id}`);
-    } catch (e: any) {
-      setError(e?.message || "Erreur réseau");
-    } finally {
-      setLoading(false);
-    }
+  if (profileErr) {
+    return (
+      <div className="p-6 md:p-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Erreur profil</div>
+          <div className="text-sm text-rose-700 mt-2">
+            {profileErr.message}
+          </div>
+        </div>
+      </div>
+    );
   }
+
+  const agencyId = profile?.agency_id;
+
+  if (!agencyId) {
+    return (
+      <div className="p-6 md:p-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Aucune agence liée</div>
+          <div className="text-sm text-slate-600 mt-1">
+            Ton compte n’a pas de <code>agency_id</code> dans <code>users_profile</code>.
+          </div>
+
+          <div className="mt-4 flex gap-3">
+            <Link className="underline text-blue-600" href="/profile">
+              Aller au profil
+            </Link>
+            <Link className="underline text-slate-600" href="/dashboard">
+              Retour dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ✅ Liste des clients de l’agence
+  const { data: clients, error: clientsErr } = await supabase
+    .from("clients")
+    .select(
+      `
+      id, name, category, logo_url, created_at,
+      client_social_accounts(id),
+      member_client_access(id)
+    `
+    )
+    .eq("agency_id", agencyId)
+    .order("created_at", { ascending: false });
+
+  if (clientsErr) {
+    return (
+      <div className="p-6 md:p-10">
+        <div className="rounded-2xl border bg-white p-6">
+          <div className="text-lg font-semibold">Erreur clients</div>
+          <div className="text-sm text-rose-700 mt-2">
+            {clientsErr.message}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const rows = (clients ?? []) as ClientRow[];
 
   return (
     <div className="p-6 md:p-10">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Créer un client</h1>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Clients</h1>
           <p className="text-sm text-slate-500">
-            Ajoute un client et ses réseaux sociaux (manuel MVP).
+            Gérez vos clients et leurs réseaux sociaux
           </p>
         </div>
 
-        {/* Card */}
-        <div className="rounded-3xl border bg-white/90 backdrop-blur shadow-sm p-5 md:p-7">
-          {/* Top row: Agency */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium text-slate-700">
-                Agence propriétaire
-              </label>
-              <select
-                value={agencyId}
-                onChange={(e) => setAgencyId(e.target.value)}
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200 bg-white"
-              >
-                <option value="">— Choisir —</option>
-                {agencies.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-xs text-slate-500">
-                Tu peux créer pour ton agence ou une agence partenaire (si tu es membre).
-              </div>
-            </div>
+        <Link
+          href="/clients/create"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition"
+        >
+          + Créer un client
+        </Link>
+      </div>
 
-            <div>
-              <label className="text-sm font-medium text-slate-700">
-                Logo URL (optionnel)
-              </label>
-              <input
-                value={logoUrl}
-                onChange={(e) => setLogoUrl(e.target.value)}
-                placeholder="https://..."
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
-              />
-            </div>
-          </div>
+      <div className="rounded-2xl border bg-white/90 overflow-hidden shadow-sm">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="text-left px-4 py-3">Client</th>
+              <th className="text-left px-4 py-3">Réseaux</th>
+              <th className="text-left px-4 py-3">Membres</th>
+              <th className="text-left px-4 py-3">Création</th>
+              <th className="px-4 py-3 text-right">Action</th>
+            </tr>
+          </thead>
 
-          {/* Client info */}
-          <div className="mt-5 grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium text-slate-700">
-                Nom du client *
-              </label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: BB Gym"
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
-              />
-            </div>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} className="border-t hover:bg-slate-50">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center">
+                      {c.logo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={c.logo_url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="font-semibold text-slate-400">
+                          {c.name?.slice(0, 1)?.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
 
-            <div>
-              <label className="text-sm font-medium text-slate-700">
-                Email (optionnel)
-              </label>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="contact@client.com"
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
-              />
-            </div>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{c.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {c.category ?? "STANDARD"}
+                      </div>
+                    </div>
+                  </div>
+                </td>
 
-            <div className="md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">
-                Téléphones (optionnel)
-              </label>
-              <textarea
-                value={phonesText}
-                onChange={(e) => setPhonesText(e.target.value)}
-                placeholder="Ex: 58 000 000, 71 000 000 (séparés par virgule ou ligne)"
-                rows={3}
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
-              />
-              <div className="mt-1 text-xs text-slate-500">
-                Converti automatiquement en tableau `phones[]`.
-              </div>
-            </div>
+                <td className="px-4 py-3">
+                  {c.client_social_accounts?.length ?? 0}
+                </td>
 
-            <div className="md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">
-                Règles / À éviter (optionnel)
-              </label>
-              <textarea
-                value={briefAvoid}
-                onChange={(e) => setBriefAvoid(e.target.value)}
-                placeholder="Ex: Ne pas utiliser humour noir, éviter promotions agressives, respecter charte…"
-                rows={4}
-                className="mt-1 w-full rounded-2xl border px-4 py-3 outline-none focus:ring-2 focus:ring-blue-200"
-              />
-              <div className="mt-1 text-xs text-slate-500">
-                (MVP) Stocké dans `clients.brief_avoid`.
-              </div>
-            </div>
-          </div>
+                <td className="px-4 py-3">
+                  {c.member_client_access?.length ?? 0}
+                </td>
 
-          {/* Social accounts manual */}
-          <SocialAccountsInline onChange={setSocials} />
+                <td className="px-4 py-3 text-slate-500">
+                  {c.created_at
+                    ? new Date(c.created_at).toLocaleDateString()
+                    : "-"}
+                </td>
 
-          {/* Error */}
-          {error ? (
-            <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 p-3 text-sm">
-              {error}
-            </div>
-          ) : null}
+                <td className="px-4 py-3 text-right">
+                  <Link
+                    href={`/clients/${c.id}`}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-slate-100 transition"
+                  >
+                    ⚙️ Gérer
+                  </Link>
+                </td>
+              </tr>
+            ))}
 
-          {/* Actions */}
-          <div className="mt-6 flex flex-col md:flex-row gap-3 md:items-center md:justify-end">
-            <button
-              type="button"
-              onClick={() => router.push("/clients")}
-              className="px-4 py-3 rounded-2xl border bg-white hover:bg-slate-50 transition"
-              disabled={loading}
-            >
-              Annuler
-            </button>
-
-            <button
-              type="button"
-              onClick={onSubmit}
-              className="px-5 py-3 rounded-2xl bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60"
-              disabled={loading}
-            >
-              {loading ? "Création..." : "Créer le client"}
-            </button>
-          </div>
-        </div>
+            {!rows.length && (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-4 py-10 text-center text-slate-500"
+                >
+                  Aucun client pour le moment.
+                  <div className="mt-2">
+                    <Link className="underline text-blue-600" href="/clients/create">
+                      Créer le premier client
+                    </Link>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
